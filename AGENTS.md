@@ -4,7 +4,7 @@
 
 Atoms：一个「对话即应用」的 AI Agent 平台。用户用自然语言描述需求，Agent 在**真实隔离沙箱**里写文件、装依赖、构建，右侧实时预览，并可一键发布分享。
 
-> 架构、取舍、里程碑见 [DESIGN.md](./DESIGN.md)；面向人的介绍见 [README.md](./README.md)。
+> 架构见 [docs/architecture.md](./docs/architecture.md)，路线图见 [docs/roadmap.md](./docs/roadmap.md)；面向人的介绍见 [README.md](./README.md)。
 
 ## 架构速览（部署前必读）
 
@@ -31,7 +31,10 @@ pnpm install
 cp .env.example .env          # DATABASE_URL / OPENCODE_GO_API_KEY / SANDBOX_* / SESSION_SECRET
 pnpm --filter @atoms/api db:init   # 建表（改 schema.sql 后两端都要跑）
 pnpm dev                      # 同时起 api(:8787) + web(:5173)
-pnpm -r typecheck             # 改完必跑
+pnpm -r typecheck             # 类型检查
+pnpm lint                     # oxlint
+pnpm fmt                      # oxfmt 格式化
+pnpm test                     # vitest
 pnpm --filter @atoms/web build     # 前端构建
 ```
 
@@ -43,7 +46,25 @@ pnpm --filter @atoms/web build     # 前端构建
 4. **接模型必须带 `x-opencode-session` + 自定义 `User-Agent`**，否则上游报 `MissingSessionID`。细节见技能 `.agents/skills/atoms-opencode-go`。
 5. **AI SDK v7**：`convertToModelMessages` 是异步的；工具 `execute` 拿不到 UI writer，流式工具输出要走 `createUIMessageStream` + 闭包。
 6. **nginx 反代 `/api` 必须关 SSE buffering**（`proxy_buffering off`），否则流式不可见。
-7. 改完代码**至少跑 `pnpm -r typecheck`**；改 UI/逻辑尽量本地起服务自测。
+7. 改完代码**至少跑 `pnpm -r typecheck` + `pnpm lint`**；动手前后用 `pnpm fmt` 统一格式；改逻辑补/跑 `pnpm test`；改 UI 尽量本地起服务自测。
+
+## 迭代与文档
+
+文档都在 `docs/` 下：
+
+```
+docs/
+├─ README.md            # 索引、迭代约定与工作流程
+├─ architecture.md      # 系统架构（权威来源，持续更新）
+├─ roadmap.md           # 路线图与已知限制（滚动更新）
+└─ iterations/          # 每次迭代一份方案（append-only，编号递增）
+   ├─ 000-template.md
+   └─ <NNN>-<主题>.md
+```
+
+- **架构 vs 迭代**：`architecture.md` 描述「系统现在长什么样」（长期）；`iterations/` 是「一次迭代一份、不删旧档」的方案与完成情况——改动优先更新架构，历史留在迭代。
+- **工作流程（体系化优化 / 整块功能迭代）**：先用 `grill-me` 技能**逐个**澄清需求 → 制定计划 → 用户确认 → 落 `docs/iterations/<NNN>-<主题>.md` → 执行 → 验收通过后回溯更新文档。零散小改动不套此流程。
+- 完整约定见 [docs/README.md](./docs/README.md)。
 
 ## 部署与运维
 
@@ -51,6 +72,7 @@ pnpm --filter @atoms/web build     # 前端构建
 
 ## 相关文档
 
-- [DESIGN.md](./DESIGN.md)：架构与设计决策、路线图
-- [SUBMISSION.md](./SUBMISSION.md)：完成度、已知限制、扩展计划
+- [docs/architecture.md](./docs/architecture.md)：系统架构（权威来源）
+- [docs/roadmap.md](./docs/roadmap.md)：路线图与已知限制
+- [docs/README.md](./docs/README.md)：文档索引与迭代约定
 - 技能：`.agents/skills/atoms-deploy`、`.agents/skills/atoms-opencode-go`、`.agents/skills/git-commit`

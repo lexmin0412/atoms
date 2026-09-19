@@ -71,7 +71,9 @@ pnpm dev                  # 同时起 api(:8787) 和 web(:5173)
 
 ## 相关文档
 
-- [DESIGN.md](./DESIGN.md)：架构、设计决策与路线图
+- [docs/architecture.md](./docs/architecture.md)：系统架构
+- [docs/roadmap.md](./docs/roadmap.md)：路线图与已知限制
+- [docs/](./docs/README.md)：文档索引与迭代方案（`docs/iterations/`）
 - [AGENTS.md](./AGENTS.md)：面向 AI/协作者的开发约定
 
 ## License
