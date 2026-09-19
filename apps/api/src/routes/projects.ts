@@ -60,6 +60,15 @@ async function ownedProject(projectId: string, userId: string) {
   return r.rows[0] ?? null;
 }
 
+/** 已发布应用 URL（未配置 APPS_DOMAIN 时返回空串，前端自行降级） */
+function publishedUrl(id: string): string {
+  return config.appsDomain ? `https://${id}.${config.appsDomain}` : '';
+}
+/** 开发预览 URL */
+function previewUrl(id: string): string {
+  return config.appsDomain ? `https://dev-${id}.${config.appsDomain}/` : '';
+}
+
 projectRoutes.get('/:id', async (c) => {
   const user = c.get('user');
   const project = await ownedProject(c.req.param('id'), user.id);
@@ -367,7 +376,7 @@ projectRoutes.get('/:id/preview-url', async (c) => {
   if (!id) return c.json({ error: 'id_required' }, 400);
   const project = await ownedProject(id, user.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
-  return c.json({ url: `https://dev-${id}.atoms.lexmin.cn/` });
+  return c.json({ url: previewUrl(id) });
 });
 
 /** 启动开发应用后端（供预览子域的 /api 使用）；纯前端项目可忽略 */
@@ -483,7 +492,7 @@ projectRoutes.post('/:id/publish', async (c) => {
     [id, status, target, schema],
   );
 
-  return c.json({ status, url: `https://${id}.atoms.lexmin.cn` });
+  return c.json({ status, url: publishedUrl(id) });
 });
 
 /** 发布状态（前端轮询直到 running） */
@@ -512,10 +521,10 @@ projectRoutes.get('/:id/deployment', async (c) => {
           where project_id = $1`,
         [id, st.ip, config.releasePort],
       );
-      return c.json({ status: 'running', url: `https://${id}.atoms.lexmin.cn` });
+      return c.json({ status: 'running', url: publishedUrl(id) });
     }
   }
-  return c.json({ status: row.status, url: `https://${id}.atoms.lexmin.cn` });
+  return c.json({ status: row.status, url: publishedUrl(id) });
 });
 
 /** 下架：停容器、释放名额 */

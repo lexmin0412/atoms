@@ -68,7 +68,7 @@ docs/
 
 ## 部署与运维
 
-**必须用技能 `.agents/skills/atoms-deploy`**（A/B 双机路径、pm2/systemd 进程名、分端部署流程、9 条踩坑、排障顺序都在里面）。涉及 `<A_HOST>` / `<B_HOST>` / `atoms.lexmin.cn` 时先读它。
+**必须用技能 `.agents/skills/atoms-deploy`**（A/B 双机拓扑、pm2/systemd 进程名、分端部署流程、踩坑清单、排障顺序都在里面）。真实主机/密钥/域名见同目录 **gitignored 的 `local.env`**（不在仓库里）。
 
 ## 相关文档
 

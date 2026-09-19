@@ -27,6 +27,8 @@ export const config = {
     url: process.env.SANDBOX_URL ?? 'http://127.0.0.1:4000',
     secret: process.env.SANDBOX_SHARED_SECRET ?? '',
   },
+  /** 应用域名（发布 <id>.<APP_DOMAIN>、预览 dev-<id>.<APP_DOMAIN>）；未配置则不返回绝对 URL */
+  appsDomain: process.env.APPS_DOMAIN ?? '',
   /** credits：每自然月补满到该额度（1 积分 = $0.01） */
   creditsMonthlyGrant: Number(process.env.CREDITS_MONTHLY_GRANT ?? 500),
   /** 已发布应用后端在容器内监听的端口（与沙箱侧约定一致） */

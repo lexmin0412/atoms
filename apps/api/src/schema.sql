@@ -40,7 +40,7 @@ create index if not exists messages_project_seq_idx on messages (project_id, seq
 create index if not exists projects_user_idx on projects (user_id);
 create index if not exists sessions_token_idx on sessions (token);
 
--- 发布（每个项目至多一个已发布应用，地址 = <projectId>.atoms.lexmin.cn）
+-- 发布（每个项目至多一个已发布应用，地址 = <projectId>.<APPS_DOMAIN>）
 create table if not exists app_releases (
   project_id uuid primary key references projects(id) on delete cascade,
   status text not null default 'stopped',   -- running | stopped | error

@@ -180,7 +180,7 @@ app.post('/sandbox/:id/release/stop', async (c) => {
   return c.json({ ok: true });
 });
 
-/** 前门 <id>.atoms.lexmin.cn/api/* → 该应用常驻后端容器 */
+/** 前门 <id>.<APPS_DOMAIN>/api/* → 该应用常驻后端容器 */
 async function appProxy(c: Context<SandboxEnv>) {
   const id = c.req.param('id') ?? '';
   const st = await releaseStatus(id);

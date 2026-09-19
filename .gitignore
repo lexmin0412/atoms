@@ -13,3 +13,6 @@ coverage
 # 个人/内部材料，不随开源仓库发布
 demands.md
 SUBMISSION.md
+
+# 部署技能的本地配置（不进仓库）
+.agents/skills/atoms-deploy/local.env
