@@ -49,8 +49,9 @@ ssh -i "$HOME/.ssh/<SSH_KEY>" ubuntu@<B_HOST> 'sudo systemctl restart atoms-sand
 ```
 
 ### 改了数据库 schema（apps/api/src/schema.sql）
-两端都要建表：
+**顺序很重要：先把新 schema 同步到 A，再在 A 上执行 `db:init`**（否则 A 用的是旧 schema，新表建不出来 → 线上 500）。
 ```bash
+rsync -az -e "ssh -o BatchMode=yes" apps/api/src/schema.sql <A_HOST>:~/code/atoms/apps/api/src/schema.sql   # 或整体 rsync
 pnpm --filter @atoms/api db:init                                   # 本地
 ssh ... <A_HOST> 'export PATH="...v22.23.1/..."; cd ~/code/atoms && pnpm --filter @atoms/api db:init'
 ```
@@ -68,10 +69,12 @@ ssh ... ubuntu@<B_HOST> 'cd ~/atoms-sandbox && docker build -t atoms-sandbox:lat
 3. **corepack 预置 pnpm 无效**：`corepack prepare` 缓存在 root 的 HOME，运行时以 node 用户找不到 → 会重新下载。改用 `npm i -g pnpm`。
 4. **本机 `pnpm install` 会跳过 esbuild 构建脚本** → `vite build` 失败。仓库根 `.npmrc` 必须有 `dangerously-allow-all-builds=true`。
 5. **nginx 必须关 SSE buffering**，否则聊天/流式看不到逐字输出：`proxy_buffering off; proxy_set_header Connection ""; proxy_read_timeout 600s;`。
-6. **rsync 排除 `.env`**：改端口/密钥后要单独在目标机改 `.env`，否则线上还是旧配置。
-7. **别用变量存含空格的 ssh 命令**：zsh 不做分词，`$SSH "cmd"` 会报 “no such file or directory”。直接内联。
-8. **B 机端口不要开公网**：沙箱服务绑 `127.0.0.1`，用 SSH 隧道。`SANDBOX_HOST` 默认 `127.0.0.1`。
-9. **Let's Encrypt 单域名走 HTTP-01**，用 webroot `/var/www/atoms`：`certbot certonly --webroot -w /var/www/atoms -d atoms.lexmin.cn`。泛域名才需要 DNSPod API + DNS-01。
+6. **nginx 必须单独代理 `/share/`**：公开分享链接由 API 提供，若不配置会被 `location /` 的 SPA 兜底吃掉（表现为「分享页变成平台首页」）。站点配置见仓库 `deploy/nginx/atoms.lexmin.cn.conf`。
+7. **改 schema 忘同步/建表 → 线上 500**：`db:init` 之前必须先把 `schema.sql` 同步到 A（见上）。
+8. **rsync 排除 `.env`**：改端口/密钥后要单独在目标机改 `.env`，否则线上还是旧配置。
+9. **别用变量存含空格的 ssh 命令**：zsh 不做分词，`$SSH "cmd"` 会报 “no such file or directory”。直接内联。
+10. **B 机端口不要开公网**：沙箱服务绑 `127.0.0.1`，用 SSH 隧道。`SANDBOX_HOST` 默认 `127.0.0.1`。
+11. **Let's Encrypt 单域名走 HTTP-01**，用 webroot `/var/www/atoms`：`certbot certonly --webroot -w /var/www/atoms -d atoms.lexmin.cn`。泛域名才需要 DNSPod API + DNS-01。
 
 ## 验证与健康检查
 
