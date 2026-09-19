@@ -1,0 +1,28 @@
+{
+  "name": "@atoms/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "db:init": "tsx src/scripts/init-db.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.13",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.53",
+    "@atoms/shared": "workspace:^",
+    "@hono/node-server": "^2.1.1",
+    "ai": "^7.0.107",
+    "dotenv": "^18.0.1",
+    "hono": "^4.13.8",
+    "pg": "^8.23.0",
+    "zod": "^4.6.5"
+  }
+}

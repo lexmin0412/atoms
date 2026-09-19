@@ -1,0 +1,14 @@
+node_modules
+dist
+build
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+coverage
+.turbo
+
+# 个人/内部材料，不随开源仓库发布
+demands.md
+SUBMISSION.md

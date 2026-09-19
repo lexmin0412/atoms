@@ -1,0 +1,84 @@
+---
+name: atoms-deploy
+description: >
+  部署与运维 Atoms-Demo（控制面 A 机 / 数据面 B 机沙箱 / nginx+HTTPS / SSH 隧道）。
+  当需要「部署 atoms」「更新线上」「重启 atoms-api」「重启沙箱服务」「改数据库 schema」
+  「签/续证书」「线上出问题排查」，或修改了 apps/api、apps/web、apps/sandbox 后要发布时使用。
+  只要涉及两台腾讯云机器（<A_HOST> / <B_HOST>）或域名 atoms.lexmin.cn，就用本技能。
+tags: ["Deploy", "Atoms"]
+---
+
+# Atoms-Demo 部署与运维
+
+本项目是**双机架构**，部署时必须分清改的是哪一端、发到哪台机器。
+
+## 拓扑与凭据位置
+
+| | A 机（控制面） | B 机（数据面 / 沙箱） |
+|---|---|---|
+| 公网 IP | `<A_HOST>` | `<B_HOST>` |
+| 登录 | `ubuntu`，key `~/.ssh/<SSH_KEY>` | 同左 |
+| 仓库 | `~/code/atoms` | `~/atoms-sandbox` |
+| Node | `~/.local/share/fnm/node-versions/v22.23.1/installation/bin`（**必须用 22.23.1**，22.0.0 不支持 pnpm） | 系统 `/usr/local/bin/node` |
+| 进程 | pm2：`atoms-api`（:3010）+ `atoms-tunnel` | systemd：`atoms-sandbox`（`127.0.0.1:4000`） |
+| 其他 | Postgres 库 `atoms`（`127.0.0.1:9688`）、nginx 站点 `atoms.lexmin.cn`、静态 `/var/www/atoms` | Docker 镜像 `atoms-sandbox:latest`、网络 `atoms-sandbox`、工作区 `/srv/atoms` |
+
+**A→B 连接**：不开放 B 公网端口。A 用 `atoms-tunnel`（pm2 跑 `~/code/atoms/tunnel.sh`，ssh `-L 4000:127.0.0.1:4000`，用 `~/.ssh/<TUNNEL_KEY>`）转发到 B 的沙箱服务。
+
+**密钥**：`SANDBOX_SHARED_SECRET` 必须 A/B 两端一致（A 在 `~/code/atoms/.env`，B 在 `~/atoms-sandbox/.env`）；LLM key 只在 A。`.env` 均被 rsync 排除、且已 gitignore——别手动覆盖。
+
+## 部署流程
+
+### 只改后端（apps/api）
+```bash
+rsync -az -e "ssh -o BatchMode=yes" apps/api/src/ <A_HOST>:~/code/atoms/apps/api/src/
+ssh -o BatchMode=yes <A_HOST> 'export PATH="$HOME/.local/share/fnm/node-versions/v22.23.1/installation/bin:$PATH"; pm2 restart atoms-api && sleep 3 && curl -s https://atoms.lexmin.cn/api/health'
+```
+
+### 只改前端（apps/web）
+```bash
+rsync -az -e "ssh -o BatchMode=yes" apps/web/src/ <A_HOST>:~/code/atoms/apps/web/src/
+ssh -o BatchMode=yes <A_HOST> 'export PATH="$HOME/.local/share/fnm/node-versions/v22.23.1/installation/bin:$PATH"; cd ~/code/atoms && pnpm --filter @atoms/web build && sudo cp -r apps/web/dist/* /var/www/atoms/'
+```
+> `vite` 产物**必须 cp 到 `/var/www/atoms`**，否则线上不更新。
+
+### 改沙箱服务（apps/sandbox）
+```bash
+rsync -az -e "ssh -i $HOME/.ssh/<SSH_KEY>" apps/sandbox/src/ ubuntu@<B_HOST>:~/atoms-sandbox/src/
+ssh -i "$HOME/.ssh/<SSH_KEY>" ubuntu@<B_HOST> 'sudo systemctl restart atoms-sandbox && systemctl is-active atoms-sandbox'
+```
+
+### 改了数据库 schema（apps/api/src/schema.sql）
+两端都要建表：
+```bash
+pnpm --filter @atoms/api db:init                                   # 本地
+ssh ... <A_HOST> 'export PATH="...v22.23.1/..."; cd ~/code/atoms && pnpm --filter @atoms/api db:init'
+```
+
+### 重建沙箱镜像（apps/sandbox/docker/Dockerfile）
+```bash
+rsync ... apps/sandbox/docker/Dockerfile ubuntu@<B_HOST>:~/atoms-sandbox/docker/
+ssh ... ubuntu@<B_HOST> 'cd ~/atoms-sandbox && docker build -t atoms-sandbox:latest docker/ && docker rm -f $(docker ps -aq --filter name=atoms-)'
+```
+
+## 踩坑清单（都真实踩过）
+
+1. **`pkill -f 'docker build'` 会把自己杀掉**：执行它的 shell 命令行里含同样字符串。用 `pkill -f 'docke[r] build'` 规避自匹配。
+2. **镜像里别用 `apt-get install`**：容器内 apt 走 Debian 公网源，国内极慢。沙箱镜像只做 `npm i -g pnpm@10` + 写 `/usr/local/etc/npmrc`（腾讯内网源 `mirrors.tencentyun.com`）。
+3. **corepack 预置 pnpm 无效**：`corepack prepare` 缓存在 root 的 HOME，运行时以 node 用户找不到 → 会重新下载。改用 `npm i -g pnpm`。
+4. **本机 `pnpm install` 会跳过 esbuild 构建脚本** → `vite build` 失败。仓库根 `.npmrc` 必须有 `dangerously-allow-all-builds=true`。
+5. **nginx 必须关 SSE buffering**，否则聊天/流式看不到逐字输出：`proxy_buffering off; proxy_set_header Connection ""; proxy_read_timeout 600s;`。
+6. **rsync 排除 `.env`**：改端口/密钥后要单独在目标机改 `.env`，否则线上还是旧配置。
+7. **别用变量存含空格的 ssh 命令**：zsh 不做分词，`$SSH "cmd"` 会报 “no such file or directory”。直接内联。
+8. **B 机端口不要开公网**：沙箱服务绑 `127.0.0.1`，用 SSH 隧道。`SANDBOX_HOST` 默认 `127.0.0.1`。
+9. **Let's Encrypt 单域名走 HTTP-01**，用 webroot `/var/www/atoms`：`certbot certonly --webroot -w /var/www/atoms -d atoms.lexmin.cn`。泛域名才需要 DNSPod API + DNS-01。
+
+## 验证与健康检查
+
+```bash
+curl -s https://atoms.lexmin.cn/api/health                 # A 网关 + api
+ssh ... <A_HOST> 'curl -s http://127.0.0.1:4000/health'   # A→B 隧道
+ssh ... <B_HOST> 'systemctl is-active atoms-sandbox; docker ps --filter name=atoms-'
+```
+
+线上问题排查顺序：**nginx → api(pm2 logs atoms-api) → 隧道(curl :4000) → 沙箱(journalctl -u atoms-sandbox) → 容器(docker logs/ps)**。
