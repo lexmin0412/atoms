@@ -1,0 +1,203 @@
+/* ─────────────────────────────────────────────────────────────
+   Atoms · 设计 token
+   基调：Blueprint（制图台）—— 正交网格 + 制图青，双主题
+   颜色统一用 oklch；明暗两套值只改变量，组件不写死颜色
+   ───────────────────────────────────────────────────────────── */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans:
+    'Geist Variable', 'Noto Sans SC Variable', ui-sans-serif, system-ui, -apple-system,
+    'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono:
+    'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* 圆角收敛：工具型界面，克制，不用大圆角 */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
+  /* 网格与辉光 */
+  --grid-size: 32px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-elevated: var(--elevated);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+}
+
+/* ── Blueprint Paper（亮） ───────────────────────────────── */
+:root {
+  color-scheme: light;
+
+  --background: oklch(0.975 0.004 85);
+  --surface: oklch(1 0 0);
+  --elevated: oklch(1 0 0);
+  --foreground: oklch(0.21 0.012 65);
+  --muted: oklch(0.955 0.005 85);
+  --muted-foreground: oklch(0.52 0.012 70);
+  --border: oklch(0.912 0.006 85);
+  --border-strong: oklch(0.85 0.01 80);
+
+  /* 琥珀：填充用亮色 + 深色前景；文字/描边用 accent-ink 保证对比度 */
+  /* 橙底 + 白字：明度必须压到 ~0.60 才有足够对比度 */
+  --accent: oklch(0.6 0.19 42);
+  --accent-foreground: oklch(0.995 0.004 60);
+  --accent-soft: oklch(0.95 0.045 50);
+  --accent-ink: oklch(0.52 0.17 42);
+  --ring: oklch(0.6 0.19 42);
+
+  --success: oklch(0.58 0.12 155);
+  --warn: oklch(0.7 0.14 72);
+  --danger: oklch(0.56 0.19 25);
+
+  --grid-line: oklch(0.55 0.03 60 / 7%);
+  --glow: oklch(0.6 0.19 42 / 10%);
+  --shadow-card:
+    0 1px 2px oklch(0.3 0.03 250 / 5%), 0 8px 24px -12px oklch(0.3 0.03 250 / 10%);
+}
+
+/* ── Blueprint Night（暗） ───────────────────────────────── */
+.dark {
+  color-scheme: dark;
+
+  --background: oklch(0.163 0.006 70);
+  --surface: oklch(0.203 0.007 70);
+  --elevated: oklch(0.235 0.008 70);
+  --foreground: oklch(0.96 0.003 80);
+  --muted: oklch(0.245 0.007 70);
+  --muted-foreground: oklch(0.67 0.01 70);
+  --border: oklch(0.29 0.008 70);
+  --border-strong: oklch(0.38 0.01 70);
+
+  --accent: oklch(0.64 0.185 45);
+  --accent-foreground: oklch(0.995 0.004 60);
+  --accent-soft: oklch(0.3 0.06 45);
+  --accent-ink: oklch(0.74 0.15 48);
+  --ring: oklch(0.64 0.185 45);
+
+  --success: oklch(0.715 0.13 155);
+  --warn: oklch(0.79 0.14 75);
+  --danger: oklch(0.68 0.18 25);
+
+  --grid-line: oklch(0.8 0.06 55 / 6%);
+  --glow: oklch(0.64 0.185 45 / 8%);
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 30%), 0 10px 30px -14px oklch(0 0 0 / 55%);
+}
+
+/* ── 基础 ─────────────────────────────────────────────────── */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-feature-settings:
+      'cv01' 1,
+      'ss01' 1;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* 数字/时间/金额统一等宽对齐 */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--foreground);
+  }
+
+  /* 统一焦点环 */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  /* 细滚动条 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+    background-clip: content-box;
+  }
+}
+
+/* 蓝图网格背景：正交细线 + 顶部辉光（明暗共用，靠变量切换） */
+.blueprint {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(120% 55% at 50% -12%, var(--glow), transparent 62%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    var(--grid-size) var(--grid-size),
+    var(--grid-size) var(--grid-size);
+  background-attachment: fixed;
+}
+
+/* 卡片：描边为主、阴影为辅 */
+.panel {
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.panel-raised {
+  background-color: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+/* 图纸卡标题行（工具调用 / 终端块共用） */
+.blueprint-head {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+  color: var(--muted-foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

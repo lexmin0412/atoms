@@ -1,7 +1,18 @@
 import type { UserDto } from '@atoms/shared';
 import { useState } from 'react';
 
+import { ThemeToggle } from '../components/ThemeToggle';
+import { Button } from '../components/ui/Button';
+import { Field } from '../components/ui/Field';
+import { IconArrowRight } from '../components/ui/icons';
+import { AtomsMark } from '../components/ui/Logo';
 import { api } from '../lib/api';
+
+const POINTS = [
+  ['对话即应用', '用自然语言描述需求，Agent 直接写代码'],
+  ['真实沙箱', '隔离环境里装依赖、构建、运行'],
+  ['一键发布', '生成可分享的独立应用地址'],
+];
 
 export default function Login({ onLogin }: { onLogin: (u: UserDto) => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -29,60 +40,119 @@ export default function Login({ onLogin }: { onLogin: (u: UserDto) => void }) {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-neutral-50 p-6 dark:bg-neutral-950">
-      <div className="w-full max-w-sm rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-        <h1 className="mb-1 text-xl font-semibold">Atoms</h1>
-        <p className="mb-6 text-sm text-neutral-500">
-          {mode === 'login' ? '登录你的账号' : '创建一个账号'}
-        </p>
+    <div className="blueprint relative flex min-h-full items-center justify-center p-6">
+      <div className="absolute top-5 right-5">
+        <ThemeToggle />
+      </div>
 
-        <form onSubmit={submit} className="space-y-3">
-          <input
-            type="email"
-            required
-            placeholder="邮箱"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+      <div className="panel-raised grid w-full max-w-4xl overflow-hidden md:grid-cols-[1.05fr_1fr]">
+        {/* 品牌面板 */}
+        <div className="relative hidden flex-col justify-between p-9 md:flex">
+          <div
+            className="pointer-events-none absolute inset-0 opacity-[0.55]"
+            style={{
+              backgroundImage:
+                'linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px)',
+              backgroundSize: 'var(--grid-size) var(--grid-size)',
+            }}
+            aria-hidden
           />
-          {mode === 'register' && (
-            <input
+          <div className="relative">
+            <span style={{ color: 'var(--accent)' }}>
+              <AtomsMark size={30} />
+            </span>
+            <h1 className="mt-5 text-[26px] leading-tight font-semibold tracking-[-0.02em]">
+              Atoms
+            </h1>
+            <p className="text-muted-foreground mt-2 max-w-[22ch] text-[13.5px] leading-relaxed">
+              把一句话的想法，拆成最小单元，组装成一个真正能跑的应用。
+            </p>
+          </div>
+
+          <ul className="relative mt-10 space-y-3.5">
+            {POINTS.map(([t, d]) => (
+              <li key={t} className="flex gap-3">
+                <span
+                  className="mt-1.5 size-1.5 shrink-0 rounded-full"
+                  style={{ background: 'var(--accent)' }}
+                  aria-hidden
+                />
+                <div>
+                  <p className="text-[13px] font-medium">{t}</p>
+                  <p className="text-muted-foreground mt-0.5 text-[12.5px]">{d}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* 表单面板 */}
+        <div className="border-border p-9 md:border-l">
+          <div className="mb-6 flex items-center gap-2 md:hidden">
+            <span style={{ color: 'var(--accent)' }}>
+              <AtomsMark size={22} />
+            </span>
+            <span className="text-[15px] font-semibold tracking-[-0.02em]">Atoms</span>
+          </div>
+
+          <div className="mb-6">
+            <h2 className="text-[17px] font-semibold tracking-[-0.01em]">
+              {mode === 'login' ? '登录' : '创建账号'}
+            </h2>
+            <p className="text-muted-foreground mt-1 text-[12.5px]">
+              {mode === 'login' ? '继续你的项目' : '注册后即可开始生成应用'}
+            </p>
+          </div>
+
+          <form onSubmit={submit} className="space-y-3.5">
+            <Field
+              label="邮箱"
+              type="email"
               required
-              placeholder="用户名"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
             />
-          )}
-          <input
-            type="password"
-            required
-            placeholder="密码"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-          />
+            {mode === 'register' && (
+              <Field
+                label="用户名"
+                required
+                placeholder="怎么称呼你"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            )}
+            <Field
+              label="密码"
+              type="password"
+              required
+              placeholder="至少 6 位"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
 
-          {error && <p className="text-sm text-red-500">{error}</p>}
+            {error && (
+              <p className="border-danger/30 bg-danger/8 text-danger rounded-sm border px-2.5 py-1.5 text-[12.5px]">
+                {error}
+              </p>
+            )}
+
+            <Button type="submit" variant="primary" loading={busy} className="w-full">
+              {mode === 'login' ? '登录' : '注册并登录'}
+              <IconArrowRight />
+            </Button>
+          </form>
 
           <button
-            type="submit"
-            disabled={busy}
-            className="w-full rounded-lg bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+            onClick={() => {
+              setMode(mode === 'login' ? 'register' : 'login');
+              setError('');
+            }}
+            className="text-muted-foreground hover:text-foreground mt-5 text-[12.5px] transition-colors"
           >
-            {busy ? '处理中…' : mode === 'login' ? '登录' : '注册'}
+            {mode === 'login' ? '还没有账号？创建一个' : '已有账号？去登录'}
           </button>
-        </form>
-
-        <button
-          onClick={() => {
-            setMode(mode === 'login' ? 'register' : 'login');
-            setError('');
-          }}
-          className="mt-4 text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
-        >
-          {mode === 'login' ? '没有账号？去注册' : '已有账号？去登录'}
-        </button>
+        </div>
       </div>
     </div>
   );

@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 
 import { api } from '../lib/api';
+import { cx } from '../lib/cx';
+import { Badge } from './ui/Badge';
+import { Button } from './ui/Button';
+import { IconTable } from './ui/icons';
+import { Segmented } from './ui/Segmented';
 
 type Env2 = 'dev' | 'prod';
 type Table = { name: string; rows: number | null };
@@ -22,6 +27,7 @@ export default function DatabaseView({ projectId }: { projectId: string }) {
     prod: { available: boolean; tables: number };
   } | null>(null);
   const [env, setEnv] = useState<Env2>('dev');
+  const [view, setView] = useState<'data' | 'fields'>('data');
   const [tables, setTables] = useState<Table[] | null>(null);
   const [active, setActive] = useState<string>('');
   const [columns, setColumns] = useState<Column[]>([]);
@@ -34,7 +40,6 @@ export default function DatabaseView({ projectId }: { projectId: string }) {
       .dbAvailability(projectId)
       .then((r) => {
         setAvailability(r);
-        // 默认选有数据的一侧
         if (r.dev.available) setEnv('dev');
         else if (r.prod.available) setEnv('prod');
       })
@@ -89,14 +94,18 @@ export default function DatabaseView({ projectId }: { projectId: string }) {
       .catch(() => {});
   }, [projectId, env, active, page]);
 
-  if (!availability) return <p className="p-4 text-sm text-neutral-400">加载中…</p>;
+  if (!availability) {
+    return <p className="text-muted-foreground p-4 text-[12.5px]">加载中…</p>;
+  }
 
   const anyAvailable = availability.dev.available || availability.prod.available;
   if (!anyAvailable) {
     return (
-      <p className="p-4 text-sm text-neutral-500">
-        该项目还没有数据库表。等应用（后端）真正建表后，这里可分别查看开发/生产数据。
-      </p>
+      <div className="grid flex-1 place-items-center p-6">
+        <p className="text-muted-foreground max-w-[42ch] text-center text-[12.5px] leading-relaxed">
+          该项目还没有数据库表。等应用（后端）真正建表后，这里可分别查看开发 / 生产数据。
+        </p>
+      </div>
     );
   }
 
@@ -105,32 +114,32 @@ export default function DatabaseView({ projectId }: { projectId: string }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-1 border-b border-neutral-200 px-2 py-1.5 text-xs dark:border-neutral-800">
-        {(['dev', 'prod'] as Env2[]).map((e) => (
-          <button
-            key={e}
-            disabled={!availability[e].available}
-            onClick={() => setEnv(e)}
-            className={
-              'rounded px-2 py-0.5 disabled:opacity-40 ' +
-              (env === e
-                ? 'bg-neutral-100 font-medium dark:bg-neutral-800'
-                : 'text-neutral-500')
-            }
-            title={
-              availability[e].available ? `${availability[e].tables} 张表` : '暂无数据表'
-            }
-          >
-            {e === 'dev' ? '开发' : '生产'}
-          </button>
-        ))}
-        <span className="ml-2 text-neutral-400">
-          {env === 'dev' ? 'dev_ 开发库' : 'app_ 生产库'}
+      <div className="border-border flex h-10 shrink-0 items-center gap-2 border-b px-2.5">
+        <Segmented
+          value={env}
+          onChange={setEnv}
+          items={[
+            { value: 'dev' as Env2, label: '开发' },
+            { value: 'prod' as Env2, label: '生产' },
+          ]}
+        />
+        <span className="text-muted-foreground truncate font-mono text-[11px]">
+          {active || (env === 'dev' ? 'dev 库' : 'prod 库')}
         </span>
+        <div className="ml-auto">
+          <Segmented
+            value={view}
+            onChange={setView}
+            items={[
+              { value: 'data' as const, label: '数据' },
+              { value: 'fields' as const, label: '字段' },
+            ]}
+          />
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1">
-        <div className="w-40 shrink-0 overflow-y-auto border-r border-neutral-200 py-2 text-xs dark:border-neutral-800">
+        <div className="border-border w-44 shrink-0 overflow-y-auto border-r py-1.5">
           {(tables ?? []).map((t) => (
             <button
               key={t.name}
@@ -138,95 +147,138 @@ export default function DatabaseView({ projectId }: { projectId: string }) {
                 setActive(t.name);
                 setPage(1);
               }}
-              className={
-                'block w-full truncate px-3 py-1 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800 ' +
-                (active === t.name
-                  ? 'bg-neutral-100 font-medium dark:bg-neutral-800'
-                  : '')
-              }
+              className={cx(
+                'flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors',
+                active === t.name
+                  ? 'bg-accent/10 text-accent'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}
               title={t.rows === null ? t.name : `${t.name}（约 ${t.rows} 行）`}
             >
-              {t.name}
+              <IconTable size={13} />
+              <span className="truncate font-mono text-[11.5px]">{t.name}</span>
+              {t.rows !== null && (
+                <span className="tnum text-muted-foreground/60 ml-auto shrink-0 text-[10.5px]">
+                  {t.rows}
+                </span>
+              )}
             </button>
           ))}
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="border-b border-neutral-200 px-3 py-1.5 text-xs text-neutral-500 dark:border-neutral-800">
-            {columns.map((c) => (
-              <span key={c.name} className="mr-3 inline-block">
-                <span className="font-medium text-neutral-700 dark:text-neutral-300">
-                  {c.name}
-                </span>
-                <span className="ml-1 text-neutral-400">{c.type}</span>
-              </span>
-            ))}
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="sticky top-0 bg-neutral-50 dark:bg-neutral-900">
-                <tr>
-                  {columns.map((c) => (
-                    <th
-                      key={c.name}
-                      className="border-b border-neutral-200 px-2 py-1 font-medium whitespace-nowrap dark:border-neutral-800"
-                    >
-                      {c.name}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={i} className="odd:bg-neutral-50/50 dark:odd:bg-neutral-900/40">
-                    {columns.map((c) => (
-                      <td
-                        key={c.name}
-                        className={
-                          'max-w-[240px] truncate border-b border-neutral-100 px-2 py-1 dark:border-neutral-800 ' +
-                          (r[c.name] === null ? 'text-neutral-400 italic' : '')
-                        }
-                        title={cell(r[c.name])}
-                      >
-                        {cell(r[c.name])}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-                {rows.length === 0 && (
+          {view === 'fields' ? (
+            /* 字段 */
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-full text-left">
+                <thead className="bg-muted/80 text-muted-foreground sticky top-0 text-[11.5px] backdrop-blur-sm">
                   <tr>
-                    <td
-                      className="px-2 py-3 text-neutral-400"
-                      colSpan={columns.length || 1}
-                    >
-                      暂无数据
-                    </td>
+                    <th className="border-border border-b px-3 py-2 font-normal">字段</th>
+                    <th className="border-border border-b px-3 py-2 font-normal">类型</th>
+                    <th className="border-border border-b px-3 py-2 font-normal">约束</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {columns.map((c) => (
+                    <tr key={c.name} className="border-border border-t">
+                      <td className="px-3 py-2 font-mono text-[12px]">{c.name}</td>
+                      <td className="text-muted-foreground px-3 py-2 font-mono text-[11.5px]">
+                        {c.type}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Badge tone={c.nullable ? 'neutral' : 'accent'}>
+                          {c.nullable ? '可空' : '非空'}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                  {columns.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="text-muted-foreground px-3 py-6">
+                        暂无字段
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              <div className="text-muted-foreground px-3 py-2 text-[11.5px]">
+                共 {columns.length} 个字段
+              </div>
+            </div>
+          ) : (
+            /* 数据 */
+            <>
+              <div className="min-h-0 flex-1 overflow-auto">
+                <table className="w-full text-left font-mono text-[11.5px]">
+                  <thead className="bg-muted/80 sticky top-0 backdrop-blur-sm">
+                    <tr>
+                      {columns.map((c) => (
+                        <th
+                          key={c.name}
+                          className="border-border border-b px-2 py-1.5 font-medium whitespace-nowrap"
+                        >
+                          {c.name}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={i} className="odd:bg-muted/35">
+                        {columns.map((c) => (
+                          <td
+                            key={c.name}
+                            className={cx(
+                              'max-w-[240px] truncate border-b border-border/60 px-2 py-1',
+                              r[c.name] === null && 'text-muted-foreground/70 italic',
+                            )}
+                            title={cell(r[c.name])}
+                          >
+                            {cell(r[c.name])}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                    {rows.length === 0 && (
+                      <tr>
+                        <td
+                          className="text-muted-foreground px-2 py-4"
+                          colSpan={columns.length || 1}
+                        >
+                          暂无数据
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
 
-          <div className="flex items-center gap-2 border-t border-neutral-200 px-3 py-1.5 text-xs dark:border-neutral-800">
-            <span className="text-neutral-500">
-              共 {total} 行 · 第 {page}/{pages} 页
-            </span>
-            <button
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="ml-auto rounded border border-neutral-300 px-2 py-0.5 disabled:opacity-40 dark:border-neutral-700"
-            >
-              上一页
-            </button>
-            <button
-              disabled={page >= pages}
-              onClick={() => setPage((p) => Math.min(pages, p + 1))}
-              className="rounded border border-neutral-300 px-2 py-0.5 disabled:opacity-40 dark:border-neutral-700"
-            >
-              下一页
-            </button>
-          </div>
+              <div className="border-border flex items-center gap-2 border-t px-3 py-1.5">
+                <Badge>
+                  <span className="tnum">
+                    {total} 行 · {page}/{pages}
+                  </span>
+                </Badge>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-auto"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  上一页
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page >= pages}
+                  onClick={() => setPage((p) => Math.min(pages, p + 1))}
+                >
+                  下一页
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

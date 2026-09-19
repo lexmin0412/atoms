@@ -1,11 +1,17 @@
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 
 import CreditsBadge from '../components/CreditsBadge';
 import DatabaseView from '../components/DatabaseView';
 import Reasoning from '../components/Reasoning';
+import { Badge } from '../components/ui/Badge';
+import { Button } from '../components/ui/Button';
+import { PopConfirm } from '../components/ui/confirm';
+import { IconCopy, IconRefresh, IconRocket, IconSparkle } from '../components/ui/icons';
+import { AtomsMark } from '../components/ui/Logo';
+import { Segmented, type SegmentedItem } from '../components/ui/Segmented';
 import { api } from '../lib/api';
 
 // 懒加载：Streamdown + Shiki 体积较大，推迟到首条消息渲染时再加载
@@ -110,27 +116,31 @@ function ToolCard({ name, part }: { name: string; part: Part }) {
       : out
         ? JSON.stringify(out, null, 2)
         : '';
+  const dot = running ? 'var(--warn)' : failed ? 'var(--danger)' : 'var(--success)';
 
   return (
-    <div className="my-2 rounded-lg border border-neutral-200 bg-neutral-50 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+    <div className="panel my-2 overflow-hidden">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+        className="hover:bg-muted/50 flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors"
       >
-        <span className="text-neutral-400">{open ? '▾' : '▸'}</span>
-        <span className="font-medium">{toolLabel(name)}</span>
-        <span className="truncate text-neutral-500">{summarize(name, part.input)}</span>
-        <span
-          className={
-            'ml-auto shrink-0 text-xs ' +
-            (running ? 'text-amber-500' : failed ? 'text-red-500' : 'text-green-600')
-          }
-        >
-          {running ? '运行中…' : failed ? '失败' : '完成'}
+        <span className="blueprint-head w-2.5 shrink-0">{open ? '▾' : '▸'}</span>
+        <span className="blueprint-head text-foreground/80 shrink-0">
+          {toolLabel(name)}
+        </span>
+        <span className="text-muted-foreground min-w-0 flex-1 truncate font-mono text-[11.5px]">
+          {summarize(name, part.input)}
+        </span>
+        <span className="text-muted-foreground flex shrink-0 items-center gap-1.5 text-[11.5px]">
+          <span
+            className={'size-1.5 rounded-full' + (running ? ' animate-pulse' : '')}
+            style={{ background: dot }}
+          />
+          {running ? '运行中' : failed ? '失败' : '完成'}
         </span>
       </button>
       {open && outputText && (
-        <pre className="max-h-72 overflow-auto border-t border-neutral-200 px-3 py-2 text-xs whitespace-pre-wrap dark:border-neutral-800">
+        <pre className="border-border bg-background/60 text-muted-foreground max-h-72 overflow-auto border-t px-2.5 py-2 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">
           {outputText}
         </pre>
       )}
@@ -171,24 +181,76 @@ function creditsOf(parts: Part[]): {
   return null;
 }
 
-function MessageCost({ parts }: { parts: Part[] }) {
+function MessageFooter({
+  parts,
+  canRegenerate,
+  onRegenerate,
+}: {
+  parts: Part[];
+  canRegenerate: boolean;
+  onRegenerate: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
   const c = creditsOf(parts);
-  if (!c) return null;
+  const text = parts
+    .filter((p) => p.type === 'text' && p.text)
+    .map((p) => p.text ?? '')
+    .join('\n')
+    .trim();
+
+  if (!c && !text) return null;
+
   return (
-    <div className="mt-1 text-xs text-neutral-400">
-      本次消耗 {c.credits.toFixed(2)} 积分
-      {c.budgetExceeded && <span className="ml-2 text-amber-500">额度用尽，已中断</span>}
+    <div className="text-muted-foreground mt-2 flex items-center gap-3 text-[11.5px]">
+      {c && <span className="tnum">本次消耗 {c.credits.toFixed(2)} 积分</span>}
+      {c?.budgetExceeded && <Badge tone="warn">额度用尽，已中断</Badge>}
+      <span
+        className="border-border inline-flex items-center gap-1 rounded-xs border px-1.5 py-0.5 text-[10.5px]"
+        title="由 Atoms Agent 生成"
+      >
+        <span
+          className="size-1.5 rounded-full"
+          style={{ background: 'var(--accent)' }}
+          aria-hidden
+        />
+        Atoms
+      </span>
+      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/m:opacity-100 focus-within:opacity-100">
+        {text && (
+          <button
+            onClick={() => {
+              navigator.clipboard?.writeText(text);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            }}
+            className="hover:bg-muted hover:text-foreground inline-flex items-center gap-1 rounded-xs px-1.5 py-0.5 transition-colors"
+          >
+            <IconCopy size={12} />
+            {copied ? '已复制' : '复制'}
+          </button>
+        )}
+        {canRegenerate && (
+          <button
+            onClick={onRegenerate}
+            className="hover:bg-muted hover:text-foreground inline-flex items-center gap-1 rounded-xs px-1.5 py-0.5 transition-colors"
+          >
+            <IconRefresh size={12} />
+            重新生成
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
 function TerminalBlock({ cmd, text }: { cmd: string; text: string }) {
   return (
-    <div className="my-2 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950 text-xs">
-      <div className="border-b border-neutral-800 px-3 py-1.5 font-mono text-neutral-400">
-        $ {cmd}
+    <div className="panel my-2 overflow-hidden">
+      <div className="blueprint-head border-border flex items-center gap-2 border-b px-2.5 py-1.5">
+        <span style={{ color: 'var(--accent)' }}>$</span>
+        <span className="text-foreground/75 truncate">{cmd}</span>
       </div>
-      <pre className="max-h-72 overflow-auto px-3 py-2 font-mono whitespace-pre-wrap text-neutral-200">
+      <pre className="bg-background/60 text-foreground/90 max-h-72 overflow-auto px-2.5 py-2 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">
         {text || '…'}
       </pre>
     </div>
@@ -227,23 +289,27 @@ export default function Chat() {
   const { id } = useParams<{ id: string }>();
   const [input, setInput] = useState('');
   const [fileVersion, setFileVersion] = useState(0);
-  const [creditsRefresh, setCreditsRefresh] = useState(0);
   const [tab, setTab] = useState<'preview' | 'files' | 'database'>('preview');
   const [previewVersion, setPreviewVersion] = useState(0);
   const [previewSrc, setPreviewSrc] = useState('');
   const [showPanel, setShowPanel] = useState(false);
-  const [deploy, setDeploy] = useState<{ status: string; url?: string } | null>(null);
+  const [deploy, setDeploy] = useState<{
+    status: string;
+    url?: string;
+    firstTime?: boolean;
+  } | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [dbAvailable, setDbAvailable] = useState(false);
+  const [projectTitle, setProjectTitle] = useState('');
+  const [balance, setBalance] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // ---- 工作台 / 对话 分栏 ----
   const splitRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
   const isWide = useMediaQuery('(min-width: 1024px)');
-  const [containerW, setContainerW] = useState(() =>
-    typeof window === 'undefined' ? 0 : window.innerWidth,
-  );
+  // 宽度基准必须来自容器本身（工作台被侧栏包裹后，window.innerWidth ≠ 容器宽）
+  const [containerW, setContainerW] = useState(0);
   const [ratio, setRatio] = useState(() => {
     const saved = Number(
       typeof window === 'undefined' ? '' : window.localStorage.getItem(SPLIT_KEY),
@@ -338,7 +404,7 @@ export default function Chat() {
     setPublishing(true);
     try {
       const r = await api.publish(id);
-      setDeploy({ status: r.status, url: r.url });
+      setDeploy({ status: r.status, url: r.url, firstTime: r.firstTime });
     } catch (err) {
       window.alert(
         '发布失败：' + (err instanceof Error ? err.message : '请先让 Agent 成功构建'),
@@ -359,7 +425,9 @@ export default function Chat() {
     if (!id || deploy?.status !== 'starting') return;
     const t = setInterval(async () => {
       const r = await api.deployment(id).catch(() => null);
-      if (r) setDeploy({ status: r.status, url: r.url });
+      if (r) {
+        setDeploy((d) => ({ status: r.status, url: r.url, firstTime: d?.firstTime }));
+      }
     }, 2500);
     return () => clearInterval(t);
   }, [id, deploy?.status]);
@@ -384,6 +452,15 @@ export default function Chat() {
       .then((r) => setPreviewSrc(r.url))
       .catch(() => {});
     api
+      .getProject(id)
+      .then((r) => setProjectTitle(r.project.title))
+      .catch(() => {});
+    // 已有数据库表的项目，进页面就应能看到「数据库」页签
+    api
+      .dbAvailability(id)
+      .then((r) => setDbAvailable(r.dev.available || r.prod.available))
+      .catch(() => {});
+    api
       .deployment(id)
       .then((r) => {
         if (r.status && r.status !== 'none') setDeploy({ status: r.status, url: r.url });
@@ -396,7 +473,7 @@ export default function Chat() {
   useEffect(() => {
     if (status === 'ready') {
       setFileVersion((v) => v + 1);
-      setCreditsRefresh((v) => v + 1);
+      window.dispatchEvent(new CustomEvent('atoms:credits'));
       setPreviewVersion((v) => v + 1);
       if (id) {
         // 预览用独立子域；若有后端则启动开发应用（/api 才通）
@@ -418,6 +495,38 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, status]);
 
+  // 余额：挂载取一次，生成结束后由 atoms:credits 事件刷新
+  useEffect(() => {
+    const load = () => {
+      api
+        .credits()
+        .then((r) => setBalance(r.balance))
+        .catch(() => {});
+    };
+    load();
+    window.addEventListener('atoms:credits', load);
+    return () => window.removeEventListener('atoms:credits', load);
+  }, []);
+
+  const previewHost = previewSrc
+    ? (() => {
+        try {
+          return new URL(previewSrc).host;
+        } catch {
+          return previewSrc;
+        }
+      })()
+    : '';
+
+  const tabItems = useMemo(() => {
+    const items: SegmentedItem<'preview' | 'files' | 'database'>[] = [
+      { value: 'preview', label: '预览' },
+      { value: 'files', label: '文件' },
+    ];
+    if (dbAvailable) items.push({ value: 'database', label: '数据库' });
+    return items;
+  }, [dbAvailable]);
+
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const text = input.trim();
@@ -431,134 +540,193 @@ export default function Chat() {
       {/* 左：工作台（预览 / 文件 / 数据库） */}
       <div
         className={
-          'min-w-0 flex-col border-neutral-200 dark:border-neutral-800 ' +
+          'border-border min-w-0 flex-col ' +
           (isWide
-            ? 'flex border-r'
+            ? leftWidth
+              ? 'bg-surface flex border-r'
+              : 'bg-surface flex flex-1 border-r'
             : showPanel
-              ? 'fixed inset-0 z-30 flex bg-white dark:bg-neutral-950'
+              ? 'bg-background fixed inset-0 z-30 flex'
               : 'hidden')
         }
         style={isWide && leftWidth ? { width: leftWidth } : undefined}
       >
-        <div className="flex items-center gap-1 border-b border-neutral-200 px-2 py-1.5 dark:border-neutral-800">
-          <button
-            onClick={() => setTab('preview')}
-            className={
-              'rounded px-2 py-1 text-sm ' +
-              (tab === 'preview'
-                ? 'bg-neutral-100 font-medium dark:bg-neutral-800'
-                : 'text-neutral-500')
-            }
-          >
-            预览
-          </button>
-          <button
-            onClick={() => setTab('files')}
-            className={
-              'rounded px-2 py-1 text-sm ' +
-              (tab === 'files'
-                ? 'bg-neutral-100 font-medium dark:bg-neutral-800'
-                : 'text-neutral-500')
-            }
-          >
-            文件
-          </button>
-          {dbAvailable && (
-            <button
-              onClick={() => setTab('database')}
-              className={
-                'rounded px-2 py-1 text-sm ' +
-                (tab === 'database'
-                  ? 'bg-neutral-100 font-medium dark:bg-neutral-800'
-                  : 'text-neutral-500')
-              }
+        <div
+          className="border-border flex h-12 shrink-0 items-center gap-3 border-b pr-3"
+          style={{ paddingLeft: 'calc(0.75rem + var(--nav-overlay, 0px))' }}
+        >
+          <span className="max-w-52 truncate text-[13px] font-medium">
+            {projectTitle || '项目'}
+          </span>
+          <Segmented value={tab} onChange={setTab} items={tabItems} />
+          <div className="ml-auto flex items-center gap-1.5">
+            <PopConfirm
+              title="发布到线上？"
+              description="将当前构建产物发布为独立应用，用户可通过链接访问。可随时下架。"
+              confirmText="发布"
+              onConfirm={publish}
             >
-              数据库
-            </button>
-          )}
-          <div className="ml-auto flex items-center gap-1">
-            {tab === 'preview' && (
-              <button
-                onClick={() => setPreviewVersion((v) => v + 1)}
-                className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              <Button
+                size="sm"
+                variant="primary"
+                className="h-8 px-3.5 text-[13.5px]"
+                loading={publishing}
               >
-                刷新
-              </button>
-            )}
-            <button
-              onClick={publish}
-              disabled={publishing}
-              className="rounded bg-neutral-900 px-2 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-            >
-              {publishing ? '发布中…' : '发布'}
-            </button>
+                <IconRocket />
+                {publishing ? '发布中' : '发布'}
+              </Button>
+            </PopConfirm>
           </div>
         </div>
 
         {deploy && deploy.status !== 'none' && (
           <div
             className={
-              'flex items-center gap-2 border-b border-neutral-200 px-3 py-1.5 text-xs dark:border-neutral-800 ' +
-              (deploy.status === 'running'
-                ? 'bg-emerald-50 dark:bg-emerald-950'
-                : 'bg-neutral-50 dark:bg-neutral-900')
+              'border-border flex items-center gap-2 border-b px-3 py-1.5 text-[12px] ' +
+              (deploy.status === 'running' ? 'bg-success/8' : 'bg-muted/50')
             }
           >
             {deploy.status === 'starting' && (
-              <span className="text-neutral-500">发布启动中…（首次安装依赖，稍候）</span>
+              <span className="text-muted-foreground">
+                {deploy.firstTime ? '首次发布，正在安装依赖并启动…' : '正在启动应用…'}
+              </span>
             )}
             {deploy.status === 'running' && deploy.url && (
               <>
-                <span className="shrink-0 text-emerald-700 dark:text-emerald-300">
-                  已发布：
+                <span className="shrink-0" style={{ color: 'var(--success)' }}>
+                  已发布
                 </span>
                 <a
                   href={deploy.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="truncate text-emerald-700 underline dark:text-emerald-300"
+                  className="truncate underline"
+                  style={{ color: 'var(--success)' }}
                 >
                   {deploy.url}
                 </a>
-                <button
+                <Button
+                  size="sm"
+                  variant="ghost"
                   onClick={() => navigator.clipboard?.writeText(deploy.url as string)}
-                  className="shrink-0 rounded px-2 py-0.5 text-emerald-700 hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-900"
                 >
                   复制
-                </button>
-                <button
-                  onClick={unpublish}
-                  className="ml-auto shrink-0 rounded px-2 py-0.5 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+                </Button>
+                <PopConfirm
+                  title="下架应用？"
+                  description="线上链接将立即不可访问，随时可以重新发布。"
+                  confirmText="下架"
+                  danger
+                  align="right"
+                  onConfirm={unpublish}
                 >
-                  下架
-                </button>
+                  <Button size="sm" variant="ghost" className="text-danger ml-auto">
+                    下架
+                  </Button>
+                </PopConfirm>
               </>
             )}
             {deploy.status === 'stopped' && (
-              <span className="text-neutral-500">已下架（点「发布」可重新上线）</span>
+              <span className="text-muted-foreground">
+                已下架（点「发布」可重新上线）
+              </span>
             )}
             {deploy.status === 'error' && (
-              <span className="text-red-500">发布失败，请重试</span>
+              <span className="text-danger">发布失败，请重试</span>
             )}
           </div>
         )}
 
         {tab === 'preview' ? (
-          previewSrc ? (
-            <iframe
-              key={previewVersion}
-              title="preview"
-              src={previewSrc + (previewVersion ? `?v=${previewVersion}` : '')}
-              className="min-h-0 w-full flex-1 bg-white"
-            />
-          ) : (
-            <p className="p-4 text-sm text-neutral-400">预览准备中…</p>
-          )
+          <div className="bg-muted/25 flex min-h-0 flex-1 flex-col p-3">
+            <div className="border-border bg-surface flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border">
+              <div className="border-border flex h-9 shrink-0 items-center gap-2 border-b px-2.5">
+                <span className="flex shrink-0 gap-1.5" aria-hidden>
+                  {[0, 1, 2].map((i) => (
+                    <span key={i} className="bg-border-strong size-2 rounded-full" />
+                  ))}
+                </span>
+                <div className="bg-muted mx-auto flex h-6 max-w-[360px] min-w-0 flex-1 items-center gap-1.5 rounded-xs px-2">
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    className="text-muted-foreground/70 shrink-0"
+                  >
+                    <rect x="4" y="10" width="16" height="10" rx="2" />
+                    <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+                  </svg>
+                  <span className="text-muted-foreground truncate font-mono text-[11px]">
+                    {previewHost || '未就绪'}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setPreviewVersion((v) => v + 1)}
+                  aria-label="刷新预览"
+                  className="text-muted-foreground hover:bg-muted hover:text-foreground grid size-6 shrink-0 place-items-center rounded-xs transition-colors"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  >
+                    <path d="M20 11a8 8 0 1 0-2.3 5.7" />
+                    <path d="M20 5v6h-6" />
+                  </svg>
+                </button>
+                <a
+                  href={previewSrc || '#'}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="在新标签打开"
+                  className={
+                    'text-muted-foreground hover:bg-muted hover:text-foreground grid size-6 shrink-0 place-items-center rounded-xs transition-colors ' +
+                    (previewSrc ? '' : 'pointer-events-none opacity-40')
+                  }
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  >
+                    <path d="M14 4h6v6" />
+                    <path d="M20 4 11 13" />
+                    <path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" />
+                  </svg>
+                </a>
+              </div>
+              {previewSrc ? (
+                <iframe
+                  key={previewVersion}
+                  title="preview"
+                  src={previewSrc + (previewVersion ? `?v=${previewVersion}` : '')}
+                  className="min-h-0 w-full flex-1 bg-white"
+                />
+              ) : (
+                <div className="grid flex-1 place-items-center">
+                  <p className="text-muted-foreground text-[12.5px]">预览准备中…</p>
+                </div>
+              )}
+            </div>
+          </div>
         ) : tab === 'database' ? (
           <DatabaseView projectId={id as string} />
         ) : (
           <Suspense
-            fallback={<p className="p-3 text-xs text-neutral-400">加载编辑器…</p>}
+            fallback={
+              <p className="text-muted-foreground p-3 text-[12px]">加载编辑器…</p>
+            }
           >
             <FileManager key={fileVersion} projectId={id as string} busy={busy} />
           </Suspense>
@@ -566,7 +734,7 @@ export default function Chat() {
       </div>
 
       {/* 分隔条：拖动调整对话宽度（双击复位） */}
-      {isWide && (
+      {isWide && containerW > 0 && (
         <div
           role="separator"
           aria-orientation="vertical"
@@ -578,7 +746,7 @@ export default function Chat() {
           onPointerCancel={onDragEnd}
           onDoubleClick={resetDivider}
           onKeyDown={onDividerKey}
-          className="relative w-px shrink-0 cursor-col-resize bg-neutral-200 outline-none hover:bg-neutral-400 focus-visible:bg-neutral-500 dark:bg-neutral-800 dark:hover:bg-neutral-600"
+          className="bg-border hover:bg-accent/60 focus-visible:bg-accent relative w-px shrink-0 cursor-col-resize transition-colors outline-none"
         >
           <span className="absolute inset-y-0 -right-1 -left-1" />
         </div>
@@ -587,106 +755,156 @@ export default function Chat() {
       {/* 右：对话 */}
       <div
         className={
-          'flex min-w-0 flex-col ' + (isWide ? '' : showPanel ? 'hidden' : 'flex flex-1')
+          'bg-background flex min-w-0 flex-col ' +
+          (isWide ? '' : showPanel ? 'hidden' : 'flex flex-1')
         }
         style={isWide && chatWidth ? { width: chatWidth } : undefined}
       >
-        <header className="flex items-center gap-3 border-b border-neutral-200 px-4 py-2 dark:border-neutral-800">
-          <Link
-            to="/"
-            className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
-          >
-            ← 返回
-          </Link>
-          <h1 className="text-sm font-medium">对话</h1>
+        <div className="border-border flex h-12 shrink-0 items-center gap-2.5 border-b px-3">
+          <span className="truncate text-[13px] font-medium">Chat with me</span>
+          {busy && (
+            <span className="text-muted-foreground flex items-center gap-1.5 text-[11.5px]">
+              <span
+                className="size-1.5 animate-pulse rounded-full"
+                style={{ background: 'var(--accent)' }}
+                aria-hidden
+              />
+              生成中
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-2">
-            <CreditsBadge refreshKey={creditsRefresh} />
-            <button
+            {busy && (
+              <Button size="sm" variant="ghost" onClick={() => stop()}>
+                停止
+              </Button>
+            )}
+            <CreditsBadge />
+            <Button
+              size="sm"
+              variant="outline"
+              className="lg:hidden"
               onClick={() => setShowPanel((v) => !v)}
-              className="rounded border border-neutral-300 px-2 py-1 text-xs lg:hidden dark:border-neutral-700"
             >
-              {showPanel ? '收起' : '预览/文件'}
-            </button>
+              {showPanel ? '收起' : '预览'}
+            </Button>
           </div>
-        </header>
+        </div>
 
-        <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
           {messages.length === 0 && (
-            <div className="text-sm text-neutral-500">
-              <p className="mb-3">描述你想创建的应用，或从下面选一个开始：</p>
-              <div className="flex flex-wrap gap-2">
+            <div className="mx-auto max-w-[420px] pt-8">
+              <span style={{ color: 'var(--accent)' }}>
+                <AtomsMark size={24} />
+              </span>
+              <h2 className="mt-3.5 text-[15px] font-medium">描述你想创建的应用</h2>
+              <p className="text-muted-foreground mt-1.5 text-[12.5px] leading-relaxed">
+                Agent 会在真实沙箱里写代码、装依赖、构建，并把结果预览给你。
+              </p>
+              <div className="mt-5 grid grid-cols-2 gap-2">
                 {EXAMPLES.map((ex) => (
                   <button
                     key={ex}
                     onClick={() => sendMessage({ text: `帮我${ex}` })}
-                    className="rounded-full border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                    className="panel hover:border-accent/45 hover:bg-muted/50 inline-flex items-center gap-2 px-3 py-2.5 text-left text-[12.5px] transition-colors"
                   >
+                    <span className="text-accent-ink">
+                      <IconSparkle size={13} />
+                    </span>
                     {ex}
                   </button>
                 ))}
               </div>
             </div>
           )}
+
           {messages.map((m, idx) => {
             const animating =
               busy && idx === messages.length - 1 && m.role === 'assistant';
+            if (m.role === 'user') {
+              return (
+                <div key={m.id} className="flex justify-end">
+                  <div
+                    className="bg-muted/60 max-w-[85%] rounded-sm border-l-2 px-3.5 py-2 text-[13px] whitespace-pre-wrap"
+                    style={{ borderColor: 'var(--accent)' }}
+                  >
+                    {renderParts(m.parts as Part[], false)}
+                  </div>
+                </div>
+              );
+            }
             return (
-              <div
-                key={m.id}
-                className={
-                  m.role === 'user'
-                    ? 'ml-auto max-w-[85%] rounded-2xl bg-neutral-900 px-4 py-2 text-sm whitespace-pre-wrap text-white dark:bg-white dark:text-neutral-900'
-                    : 'max-w-[92%] text-sm'
-                }
-              >
+              <div key={m.id} className="group/m max-w-[95%] text-[13.5px]">
                 {renderParts(m.parts as Part[], animating)}
-                {m.role === 'assistant' && <MessageCost parts={m.parts as Part[]} />}
+                <MessageFooter
+                  parts={m.parts as Part[]}
+                  canRegenerate={!busy && idx === messages.length - 1}
+                  onRegenerate={() => regenerate()}
+                />
               </div>
             );
           })}
-          {busy && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-neutral-400">生成中…</span>
-              <button
-                onClick={() => stop()}
-                className="rounded border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
-              >
-                停止
-              </button>
-            </div>
-          )}
+
           {error && (
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-red-500">{friendlyError(error.message)}</span>
+            <div className="panel border-danger/35 bg-danger/6 flex items-center gap-3 px-3 py-2">
+              <span className="text-danger text-[12.5px]">
+                {friendlyError(error.message)}
+              </span>
               {messages.length > 0 && (
-                <button
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-danger"
                   onClick={() => regenerate()}
-                  className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
                 >
                   重试
-                </button>
+                </Button>
               )}
             </div>
           )}
           <div ref={bottomRef} />
         </div>
 
-        <form
-          onSubmit={submit}
-          className="flex gap-2 border-t border-neutral-200 px-4 py-3 dark:border-neutral-800"
-        >
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="说点什么…"
-            className="flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-          />
-          <button
-            disabled={busy || !input.trim()}
-            className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-          >
-            发送
-          </button>
+        <form onSubmit={submit} className="border-border border-t p-3.5">
+          <div className="border-border bg-surface focus-within:border-ring rounded-md border p-2.5 transition-colors">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="描述你想创建的应用…"
+              className="placeholder:text-muted-foreground/70 h-7 w-full bg-transparent px-0.5 text-[13px] outline-none"
+            />
+            <div className="mt-2 flex items-center gap-2">
+              {balance !== null && (
+                <span className="text-muted-foreground flex items-center gap-1.5 text-[11.5px]">
+                  <span
+                    className="size-1.5 rounded-full"
+                    style={{ background: 'var(--accent)' }}
+                    aria-hidden
+                  />
+                  积分剩余 <span className="tnum">{balance.toFixed(2)}</span>
+                </span>
+              )}
+              <button
+                type="submit"
+                disabled={busy || !input.trim()}
+                aria-label="发送"
+                className="bg-accent text-accent-foreground ml-auto grid size-8 place-items-center rounded-full transition-opacity disabled:opacity-40"
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M12 19V5" />
+                  <path d="m5 12 7-7 7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
         </form>
       </div>
     </div>

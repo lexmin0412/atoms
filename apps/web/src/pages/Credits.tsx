@@ -1,19 +1,48 @@
 import type { ProjectDto } from '@atoms/shared';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 
+import { Badge } from '../components/ui/Badge';
+import { Button } from '../components/ui/Button';
 import { api, type CreditSummary, type LedgerEntry } from '../lib/api';
+import { cx } from '../lib/cx';
 
 const REASON_LABEL: Record<string, string> = {
   grant: '周期发放',
   usage: '生成消耗',
-  adjust: '管理员调整',
+  adjust: '手动调整',
 };
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function Metric({
+  label,
+  value,
+  sub,
+  emphasis = false,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <div className={cx('panel p-4', emphasis && 'border-accent/35 bg-accent/6')}>
+      <p className="text-muted-foreground text-[11.5px]">{label}</p>
+      <p
+        className={cx(
+          'tnum mt-2 text-[24px] leading-none font-semibold tracking-[-0.02em]',
+          emphasis && 'text-accent',
+        )}
+      >
+        {value}
+      </p>
+      {sub && <p className="text-muted-foreground mt-2 text-[11.5px]">{sub}</p>}
+    </div>
+  );
 }
 
 export default function Credits() {
@@ -55,48 +84,44 @@ export default function Credits() {
     id ? (projects.find((p) => p.id === id)?.title ?? id.slice(0, 8)) : '—';
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
-      <header className="mb-6 flex items-center gap-3">
-        <Link
-          to="/"
-          className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
-        >
-          ← 返回
-        </Link>
-        <h1 className="text-lg font-medium">积分</h1>
-      </header>
+    <div className="mx-auto w-full max-w-4xl px-6 py-10">
+      <div className="mb-7">
+        <h1 className="text-[20px] font-semibold tracking-[-0.02em]">积分</h1>
+        <p className="text-muted-foreground mt-1 text-[12.5px]">
+          按 token 计量，1 积分 = $0.01 · 每月自动补满
+        </p>
+      </div>
 
       {summary && (
-        <div className="mb-6 grid grid-cols-3 gap-3">
-          <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
-            <p className="text-xs text-neutral-500">剩余</p>
-            <p className="mt-1 text-2xl font-medium tabular-nums">
-              {summary.balance.toFixed(2)}
-            </p>
-          </div>
-          <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
-            <p className="text-xs text-neutral-500">本周期已用（{summary.period}）</p>
-            <p className="mt-1 text-2xl font-medium tabular-nums">
-              {summary.spent.toFixed(2)}
-            </p>
-          </div>
-          <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
-            <p className="text-xs text-neutral-500">每月补满到</p>
-            <p className="mt-1 text-2xl font-medium tabular-nums">
-              {summary.monthlyGrant}
-            </p>
-          </div>
+        <div className="mb-8 grid gap-3 sm:grid-cols-3">
+          <Metric
+            label="当前余额"
+            value={summary.balance.toFixed(2)}
+            sub={`≈ $${(summary.balance / 100).toFixed(4)}`}
+            emphasis
+          />
+          <Metric
+            label={`本周期已用（${summary.period}）`}
+            value={summary.spent.toFixed(2)}
+            sub={`≈ $${(summary.spent / 100).toFixed(4)}`}
+          />
+          <Metric
+            label="每月额度"
+            value={String(summary.monthlyGrant)}
+            sub="未用完不累积"
+          />
         </div>
       )}
 
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex items-center gap-3">
+        <h2 className="text-[13.5px] font-medium">明细</h2>
         <select
           value={projectId}
           onChange={(e) => {
             setPage(1);
             setProjectId(e.target.value);
           }}
-          className="rounded border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700"
+          className="border-border bg-surface text-muted-foreground hover:border-border-strong focus:border-ring h-8 rounded-sm border px-2 text-[12.5px] focus:outline-none"
         >
           <option value="">全部项目</option>
           {projects.map((p) => (
@@ -105,17 +130,17 @@ export default function Credits() {
             </option>
           ))}
         </select>
-        <span className="text-xs text-neutral-400">共 {total} 条（1 积分 = $0.01）</span>
+        <Badge className="ml-auto">共 {total} 条</Badge>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800">
-        <table className="w-full text-sm">
-          <thead className="bg-neutral-50 text-xs text-neutral-500 dark:bg-neutral-900">
+      <div className="panel overflow-hidden">
+        <table className="w-full text-left text-[12.5px]">
+          <thead className="bg-muted/50 text-muted-foreground text-[11.5px]">
             <tr>
-              <th className="px-3 py-2 text-left font-normal">时间</th>
-              <th className="px-3 py-2 text-left font-normal">类型</th>
-              <th className="px-3 py-2 text-left font-normal">项目</th>
-              <th className="px-3 py-2 text-left font-normal">说明</th>
+              <th className="px-3 py-2 font-normal">时间</th>
+              <th className="px-3 py-2 font-normal">类型</th>
+              <th className="px-3 py-2 font-normal">项目</th>
+              <th className="px-3 py-2 font-normal">说明</th>
               <th className="px-3 py-2 text-right font-normal">变动</th>
               <th className="px-3 py-2 text-right font-normal">余额</th>
             </tr>
@@ -130,30 +155,31 @@ export default function Credits() {
                     ? String((r.meta as { period?: string }).period ?? '')
                     : String((r.meta as { model?: string }).model ?? '');
               return (
-                <tr
-                  key={r.id}
-                  className="border-t border-neutral-100 dark:border-neutral-800"
-                >
-                  <td className="px-3 py-2 whitespace-nowrap text-neutral-500">
+                <tr key={r.id} className="border-border border-t">
+                  <td className="tnum text-muted-foreground px-3 py-2 whitespace-nowrap">
                     {fmtTime(r.created_at)}
                   </td>
-                  <td className="px-3 py-2">{REASON_LABEL[r.reason] ?? r.reason}</td>
-                  <td className="max-w-32 truncate px-3 py-2 text-neutral-500">
+                  <td className="px-3 py-2">
+                    <Badge tone={r.reason === 'usage' ? 'neutral' : 'accent'}>
+                      {REASON_LABEL[r.reason] ?? r.reason}
+                    </Badge>
+                  </td>
+                  <td className="text-muted-foreground max-w-32 truncate px-3 py-2">
                     {projectName(r.project_id)}
                   </td>
-                  <td className="max-w-40 truncate px-3 py-2 text-neutral-500">{note}</td>
+                  <td className="text-muted-foreground max-w-44 truncate px-3 py-2">
+                    {note}
+                  </td>
                   <td
-                    className={
-                      'px-3 py-2 text-right tabular-nums ' +
-                      (delta >= 0
-                        ? 'text-emerald-600'
-                        : 'text-neutral-600 dark:text-neutral-300')
-                    }
+                    className={cx(
+                      'tnum px-3 py-2 text-right font-medium',
+                      delta >= 0 ? 'text-success' : 'text-foreground/85',
+                    )}
                   >
                     {delta >= 0 ? '+' : ''}
                     {delta.toFixed(2)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
+                  <td className="tnum text-muted-foreground px-3 py-2 text-right">
                     {Number(r.balance_after).toFixed(2)}
                   </td>
                 </tr>
@@ -161,7 +187,7 @@ export default function Credits() {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-neutral-400">
+                <td colSpan={6} className="text-muted-foreground px-3 py-12 text-center">
                   暂无记录
                 </td>
               </tr>
@@ -171,24 +197,26 @@ export default function Credits() {
       </div>
 
       {pages > 1 && (
-        <div className="mt-4 flex items-center justify-center gap-3 text-sm">
-          <button
+        <div className="mt-4 flex items-center justify-center gap-3">
+          <Button
+            size="sm"
+            variant="outline"
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
-            className="rounded border border-neutral-300 px-3 py-1 disabled:opacity-40 dark:border-neutral-700"
           >
             上一页
-          </button>
-          <span className="text-neutral-500">
+          </Button>
+          <span className="tnum text-muted-foreground text-[12.5px]">
             {page} / {pages}
           </span>
-          <button
+          <Button
+            size="sm"
+            variant="outline"
             disabled={page >= pages}
             onClick={() => setPage((p) => p + 1)}
-            className="rounded border border-neutral-300 px-3 py-1 disabled:opacity-40 dark:border-neutral-700"
           >
             下一页
-          </button>
+          </Button>
         </div>
       )}
     </div>

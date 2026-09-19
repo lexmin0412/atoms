@@ -2,7 +2,14 @@ import { flattenTree } from '@atoms/shared';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { api, type TreeNode } from '../lib/api';
+import { cx } from '../lib/cx';
 import CodeEditor from './CodeEditor';
+import { Button } from './ui/Button';
+import { ConfirmDialog } from './ui/confirm';
+import { Field } from './ui/Field';
+import { FileIcon, FolderIcon } from './ui/FileIcon';
+import { IconButton } from './ui/IconButton';
+import { IconFilePlus, IconFolderPlus } from './ui/icons';
 
 interface Props {
   projectId: string;
@@ -10,15 +17,80 @@ interface Props {
   busy: boolean;
 }
 
-function fileIcon(name: string): string {
-  const ext = name.split('.').pop() ?? '';
-  if (['ts', 'tsx'].includes(ext)) return 'TS';
-  if (['js', 'jsx', 'mjs'].includes(ext)) return 'JS';
-  if (ext === 'json') return '{}';
-  if (['md', 'markdown'].includes(ext)) return 'MD';
-  if (['css', 'scss'].includes(ext)) return 'CS';
-  if (['html', 'htm'].includes(ext)) return '<>';
-  return '·';
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={'transition-transform duration-100 ' + (open ? 'rotate-90' : '')}
+      aria-hidden
+    >
+      <path d="m9 6 6 6-6 6" />
+    </svg>
+  );
+}
+
+function IconSave() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M4 4.5A1.5 1.5 0 0 1 5.5 3h10L20 7.5v12A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5v-15Z" />
+      <path d="M8 3v5.5h7V3M8 21v-6h8v6" />
+    </svg>
+  );
+}
+
+function IconReload() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M4 12a8 8 0 1 0 2.3-5.7" />
+      <path d="M4 5v6h6" />
+    </svg>
+  );
+}
+
+function IconBuild() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M14.5 5.5a4 4 0 0 0 5 5L21 12l-8.5 8.5a2.1 2.1 0 0 1-3-3L18 9" />
+      <path d="m6.5 6.5 3 3" />
+    </svg>
+  );
 }
 
 export default function FileManager({ projectId, busy }: Props) {
@@ -41,6 +113,7 @@ export default function FileManager({ projectId, busy }: Props) {
     value: string;
   } | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
+  const [deleting, setDeleting] = useState<TreeNode | null>(null);
 
   const flat = useMemo(() => flattenTree(nodes, expanded), [nodes, expanded]);
   const activeNode = nodes.find((n) => n.id === activeId) ?? null;
@@ -147,13 +220,13 @@ export default function FileManager({ projectId, busy }: Props) {
   }
 
   async function remove(node: TreeNode) {
-    const what = node.type === 'dir' ? '目录（含全部子文件）' : '文件';
-    if (!window.confirm(`确定删除${what} ${node.name}？`)) return;
     try {
       await api.deleteNode(projectId, node.id);
       await refresh(activeId);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : '删除失败');
+    } finally {
+      setDeleting(null);
     }
   }
 
@@ -180,56 +253,67 @@ export default function FileManager({ projectId, busy }: Props) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" onClick={() => setMenu(null)}>
-      <div className="flex items-center gap-1 border-b border-neutral-200 px-2 py-1 dark:border-neutral-800">
-        <button
+      {/* 工具栏 */}
+      <div className="border-border flex h-10 shrink-0 items-center gap-1.5 border-b px-2.5">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={locked}
           onClick={() => toolbarAction('file')}
-          disabled={locked}
-          className="rounded px-1.5 py-0.5 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-40 dark:text-neutral-300 dark:hover:bg-neutral-800"
-          title="新建文件"
         >
-          + 文件
-        </button>
-        <button
+          <IconFilePlus size={14} />
+          文件
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={locked}
           onClick={() => toolbarAction('dir')}
-          disabled={locked}
-          className="rounded px-1.5 py-0.5 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-40 dark:text-neutral-300 dark:hover:bg-neutral-800"
-          title="新建目录"
         >
-          + 目录
-        </button>
-        <button
-          onClick={rebuild}
-          disabled={locked || rebuilding}
-          className="ml-auto rounded border border-neutral-300 px-1.5 py-0.5 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-          title="前端构建 + 重启后端"
-        >
-          {rebuilding ? '构建中…' : '重新构建'}
-        </button>
+          <IconFolderPlus size={14} />
+          目录
+        </Button>
+        <div className="ml-auto">
+          <IconButton
+            label={rebuilding ? '构建中…' : '重新构建（前端构建 + 重启后端）'}
+            icon={<IconBuild />}
+            side="left"
+            disabled={locked || rebuilding}
+            onClick={rebuild}
+          />
+        </div>
       </div>
 
       {locked && (
-        <div className="border-b border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+        <div className="border-warn/30 bg-warn/10 text-warn flex items-center gap-2 border-b px-2.5 py-1 text-[11.5px]">
+          <span className="size-1.5 rounded-full" style={{ background: 'var(--warn)' }} />
           生成中，暂不能编辑文件
         </div>
       )}
       {notice && (
-        <div className="flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-2 py-1 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+        <div className="border-border bg-muted/50 text-muted-foreground flex items-center gap-2 border-b px-2.5 py-1 text-[11.5px]">
           <span className="truncate">{notice}</span>
-          <button onClick={() => setNotice('')} className="ml-auto shrink-0">
+          <button
+            onClick={() => setNotice('')}
+            className="hover:text-foreground ml-auto shrink-0"
+          >
             ×
           </button>
         </div>
       )}
 
       <div className="flex min-h-0 flex-1">
+        {/* 文件树 */}
         <div
-          className="w-44 shrink-0 overflow-y-auto border-r border-neutral-200 py-1 text-xs dark:border-neutral-800"
+          className="border-border w-52 shrink-0 overflow-y-auto border-r py-1.5"
           onContextMenu={(e) => {
             e.preventDefault();
             setMenu({ x: e.clientX, y: e.clientY, node: null });
           }}
         >
-          {flat.length === 0 && <p className="px-3 py-1 text-neutral-400">暂无文件</p>}
+          {flat.length === 0 && (
+            <p className="text-muted-foreground px-3 py-1 text-[11.5px]">暂无文件</p>
+          )}
           {flat.map(({ node: n, depth }) => (
             <div
               key={n.id}
@@ -239,22 +323,24 @@ export default function FileManager({ projectId, busy }: Props) {
                 e.stopPropagation();
                 setMenu({ x: e.clientX, y: e.clientY, node: n });
               }}
-              className={
-                'group flex cursor-pointer items-center gap-1 py-0.5 pr-1 hover:bg-neutral-100 dark:hover:bg-neutral-800 ' +
-                (activeId === n.id ? 'bg-neutral-100 dark:bg-neutral-800' : '')
-              }
-              style={{ paddingLeft: 6 + depth * 12 }}
+              className={cx(
+                'group flex h-[22px] cursor-pointer items-center gap-1 pr-1.5 text-[12.5px] transition-colors',
+                activeId === n.id
+                  ? 'bg-accent/10 text-accent'
+                  : 'text-foreground/85 hover:bg-muted hover:text-foreground',
+              )}
+              style={{ paddingLeft: 6 + depth * 10 }}
               title={n.path}
             >
-              {n.type === 'dir' ? (
-                <span className="w-3 shrink-0 text-neutral-400">
-                  {expanded.has(n.id) ? '▾' : '▸'}
-                </span>
-              ) : (
-                <span className="w-3 shrink-0" />
-              )}
-              <span className="inline-block w-4 shrink-0 text-center font-mono text-[10px] text-neutral-400">
-                {n.type === 'dir' ? '' : fileIcon(n.name)}
+              <span className="text-muted-foreground grid size-4 shrink-0 place-items-center">
+                {n.type === 'dir' ? <Chevron open={expanded.has(n.id)} /> : null}
+              </span>
+              <span className="grid size-4 shrink-0 place-items-center">
+                {n.type === 'dir' ? (
+                  <FolderIcon open={expanded.has(n.id)} />
+                ) : (
+                  <FileIcon name={n.name} />
+                )}
               </span>
               <span className="truncate">{n.name}</span>
               {!locked && (
@@ -264,7 +350,7 @@ export default function FileManager({ projectId, busy }: Props) {
                       e.stopPropagation();
                       setPrompt({ kind: 'rename', node: n, value: n.name });
                     }}
-                    className="rounded px-1 text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
+                    className="text-muted-foreground hover:text-foreground rounded-xs px-1"
                     title="重命名"
                   >
                     ✎
@@ -272,9 +358,9 @@ export default function FileManager({ projectId, busy }: Props) {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      remove(n);
+                      setDeleting(n);
                     }}
-                    className="rounded px-1 text-neutral-400 hover:text-red-500"
+                    className="text-muted-foreground hover:text-danger rounded-xs px-1"
                     title="删除"
                   >
                     ✕
@@ -285,28 +371,36 @@ export default function FileManager({ projectId, busy }: Props) {
           ))}
         </div>
 
+        {/* 编辑器 */}
         <div className="flex min-w-0 flex-1 flex-col">
           {activeNode ? (
             <>
-              <div className="flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-3 py-1 text-xs text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900">
-                <span className="truncate">{activeNode.path}</span>
-                {dirty && <span className="text-amber-500">●</span>}
-                <div className="ml-auto flex shrink-0 items-center gap-1">
+              <div className="border-border flex h-10 shrink-0 items-center gap-2 border-b px-3">
+                <span className="text-muted-foreground truncate font-mono text-[11.5px]">
+                  {activeNode.path}
+                </span>
+                {dirty && (
+                  <span
+                    className="size-1.5 shrink-0 rounded-full"
+                    style={{ background: 'var(--warn)' }}
+                    title="有未保存改动"
+                  />
+                )}
+                <div className="ml-auto flex shrink-0 items-center gap-0.5">
                   {dirty && (
-                    <button
+                    <IconButton
+                      label="重新加载（放弃改动）"
+                      icon={<IconReload />}
                       onClick={reload}
-                      className="rounded px-1.5 py-0.5 hover:bg-neutral-200 dark:hover:bg-neutral-800"
-                    >
-                      重新加载
-                    </button>
+                    />
                   )}
-                  <button
+                  <IconButton
+                    label={saving ? '保存中…' : '保存（⌘S）'}
+                    icon={<IconSave />}
+                    className={dirty ? 'text-accent-ink hover:bg-accent/12' : undefined}
+                    disabled={!dirty || locked || saving}
                     onClick={save}
-                    disabled={!dirty || saving || locked}
-                    className="rounded bg-neutral-900 px-1.5 py-0.5 text-white disabled:opacity-40 dark:bg-white dark:text-neutral-900"
-                  >
-                    {saving ? '保存中…' : '保存'}
-                  </button>
+                  />
                 </div>
               </div>
               <CodeEditor
@@ -322,14 +416,17 @@ export default function FileManager({ projectId, busy }: Props) {
               />
             </>
           ) : (
-            <p className="p-3 text-xs text-neutral-400">选择文件查看或编辑</p>
+            <div className="grid flex-1 place-items-center">
+              <p className="text-muted-foreground text-[12px]">选择文件查看或编辑</p>
+            </div>
           )}
         </div>
       </div>
 
+      {/* 右键菜单 */}
       {menu && (
         <div
-          className="fixed z-50 min-w-32 rounded-md border border-neutral-200 bg-white py-1 text-xs shadow-lg dark:border-neutral-700 dark:bg-neutral-900"
+          className="panel-raised fixed z-50 min-w-36 py-1"
           style={{ left: menu.x, top: menu.y }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -351,6 +448,7 @@ export default function FileManager({ projectId, busy }: Props) {
           />
           {menu.node && (
             <>
+              <div className="bg-border my-1 h-px" />
               <MenuItem
                 label="重命名 / 移动"
                 disabled={locked}
@@ -364,7 +462,7 @@ export default function FileManager({ projectId, busy }: Props) {
                 danger
                 disabled={locked}
                 onClick={() => {
-                  remove(menu.node!);
+                  setDeleting(menu.node!);
                   setMenu(null);
                 }}
               />
@@ -373,17 +471,32 @@ export default function FileManager({ projectId, busy }: Props) {
         </div>
       )}
 
+      <ConfirmDialog
+        open={!!deleting}
+        title={`删除${deleting?.type === 'dir' ? '目录' : '文件'}「${deleting?.name ?? ''}」？`}
+        description={
+          deleting?.type === 'dir'
+            ? '该目录下的所有文件都会被一并删除，此操作不可恢复。'
+            : '此操作不可恢复。'
+        }
+        onConfirm={() => {
+          if (deleting) return remove(deleting);
+        }}
+        onCancel={() => setDeleting(null)}
+      />
+
+      {/* 命名弹窗 */}
       {prompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
-          <div className="w-80 rounded-lg border border-neutral-200 bg-white p-4 shadow-xl dark:border-neutral-700 dark:bg-neutral-900">
-            <p className="mb-2 text-sm font-medium">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 backdrop-blur-[1px]">
+          <div className="panel-raised w-80 p-4">
+            <p className="mb-3 text-[13px] font-medium">
               {prompt.kind === 'rename'
                 ? '重命名 / 移动'
                 : prompt.kind === 'dir'
                   ? '新建目录'
                   : '新建文件'}
             </p>
-            <input
+            <Field
               autoFocus
               value={prompt.value}
               onChange={(e) => setPrompt({ ...prompt, value: e.target.value })}
@@ -392,21 +505,14 @@ export default function FileManager({ projectId, busy }: Props) {
                 if (e.key === 'Escape') setPrompt(null);
               }}
               placeholder={prompt.kind === 'rename' ? '新名称' : '名称（如 src/app.tsx）'}
-              className="w-full rounded border border-neutral-300 px-2 py-1.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
             />
-            <div className="mt-3 flex justify-end gap-2 text-sm">
-              <button
-                onClick={() => setPrompt(null)}
-                className="rounded px-3 py-1 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-              >
+            <div className="mt-4 flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setPrompt(null)}>
                 取消
-              </button>
-              <button
-                onClick={submitPrompt}
-                className="rounded bg-neutral-900 px-3 py-1 text-white dark:bg-white dark:text-neutral-900"
-              >
+              </Button>
+              <Button size="sm" variant="primary" onClick={submitPrompt}>
                 确定
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -439,10 +545,10 @@ function MenuItem({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={
-        'block w-full px-3 py-1 text-left hover:bg-neutral-100 disabled:opacity-40 dark:hover:bg-neutral-800 ' +
-        (danger ? 'text-red-600 dark:text-red-400' : '')
-      }
+      className={cx(
+        'block w-full px-3 py-1.5 text-left text-[12.5px] transition-colors disabled:opacity-40',
+        danger ? 'text-danger hover:bg-danger/10' : 'hover:bg-muted',
+      )}
     >
       {label}
     </button>

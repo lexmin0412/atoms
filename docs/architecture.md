@@ -223,6 +223,13 @@ GET    /api/credits/ledger           消耗明细（分页，可按项目筛选�
   <Credits/>                 积分明细页（余额 + 流水 + 按项目筛选）
 ```
 
+**视觉体系（迭代 006）**
+- **蓝图网格**：正交 1px 细线 + 顶部辉光，明暗两套 alpha（`--grid-line` / `--glow`），`.blueprint` 工具类。
+- **双主题**：oklch token（`:root` 亮 / `.dark` 暗），三态（系统/亮/暗）持久化；首屏由 `index.html` 内联脚本落类名防闪。
+- **字体**：全自托管且**同源**（Geist / Geist Mono / Noto Sans SC，中文按 `unicode-range` 分片按需下载），构建与运行均无外部字体请求。
+- **品牌**：`Atoms` 字标 = 点阵 + 原子轨道（内联 SVG，与网格同构），用于登录页 / 顶栏 / 空态。
+- **结构**：`AppShell` 全局外壳（字标 · 工具区 · 积分 · 主题 · 用户菜单）；token 在 `styles/tokens.css`，基础组件在 `components/ui/`。
+
 **文件管理器（迭代 004）**
 - 树形（`pid` → 层级，目录优先排序），VSCode 风格：右键菜单 + 悬停操作图标 + 顶部工具栏。
 - 支持：新建文件/目录（含空目录）、CodeMirror 编辑（按扩展名高亮，`Cmd/Ctrl+S` 保存）、删除、重命名/移动。

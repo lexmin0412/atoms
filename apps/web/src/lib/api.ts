@@ -44,6 +44,27 @@ export interface LedgerEntry {
   created_at: string;
 }
 
+type RawProject = {
+  id: string;
+  title: string;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+/** 接口返回 snake_case，这里统一成 DTO 的 camelCase */
+function normalizeProject(p: RawProject): ProjectDto {
+  return {
+    id: p.id,
+    title: p.title,
+    status: p.status,
+    createdAt: p.createdAt ?? p.created_at ?? '',
+    updatedAt: p.updatedAt ?? p.updated_at ?? '',
+  };
+}
+
 export const api = {
   me: () => req<{ user: UserDto }>('/api/auth/me'),
   register: (d: { email: string; username: string; password: string }) =>
@@ -57,18 +78,24 @@ export const api = {
       body: JSON.stringify(d),
     }),
   logout: () => req<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
-  listProjects: () => req<{ projects: ProjectDto[] }>('/api/projects'),
+  listProjects: () =>
+    req<{ projects: RawProject[] }>('/api/projects').then((r) => ({
+      projects: r.projects.map(normalizeProject),
+    })),
   createProject: (title: string) =>
-    req<{ project: ProjectDto }>('/api/projects', {
+    req<{ project: RawProject }>('/api/projects', {
       method: 'POST',
       body: JSON.stringify({ title }),
-    }),
-  getProject: (id: string) => req<{ project: ProjectDto }>(`/api/projects/${id}`),
+    }).then((r) => ({ project: normalizeProject(r.project) })),
+  getProject: (id: string) =>
+    req<{ project: RawProject }>(`/api/projects/${id}`).then((r) => ({
+      project: normalizeProject(r.project),
+    })),
   renameProject: (id: string, title: string) =>
-    req<{ project: ProjectDto }>(`/api/projects/${id}`, {
+    req<{ project: RawProject }>(`/api/projects/${id}`, {
       method: 'PATCH',
       body: JSON.stringify({ title }),
-    }),
+    }).then((r) => ({ project: normalizeProject(r.project) })),
   deleteProject: (id: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
   messages: (id: string) =>
@@ -121,9 +148,10 @@ export const api = {
       method: 'POST',
     }),
   publish: (id: string) =>
-    req<{ status: string; url: string }>(`/api/projects/${id}/publish`, {
-      method: 'POST',
-    }),
+    req<{ status: string; url: string; firstTime?: boolean }>(
+      `/api/projects/${id}/publish`,
+      { method: 'POST' },
+    ),
   deployment: (id: string) =>
     req<{ status: string; url?: string }>(`/api/projects/${id}/deployment`),
   unpublish: (id: string) =>

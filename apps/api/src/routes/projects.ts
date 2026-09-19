@@ -347,6 +347,22 @@ projectRoutes.post('/:id/rebuild', async (c) => {
   }
 });
 
+/** 应用图标：Agent 生成的 apps/web/public/icon.svg（首页卡片展示） */
+projectRoutes.get('/:id/icon', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const project = await ownedProject(id, user.id);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+  const file = await readFile(id, 'apps/web/public/icon.svg').catch(() => null);
+  if (!file || !file.content.trim()) return c.json({ error: 'not_found' }, 404);
+  return new Response(file.content, {
+    headers: {
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'private, max-age=60',
+    },
+  });
+});
+
 /** 预览：把沙箱里 apps/web/dist 的静态产物代理出来（同源 iframe 展示） */
 async function servePreview(c: Context<Env>) {
   const user = c.get('user');
@@ -452,6 +468,10 @@ projectRoutes.post('/:id/publish', async (c) => {
 
   const rt = getSandboxRuntime();
 
+  // 是否首次发布（用于前端给出准确文案：首次要装依赖，后续快很多）
+  const prior = await query('select 1 from app_releases where project_id = $1', [id]);
+  const firstTime = !prior.rowCount;
+
   // 1) 前端产物托管（当前写本地目录，由前门 nginx 托管）
   const target = await publishFrontend(id, files);
 
@@ -492,7 +512,7 @@ projectRoutes.post('/:id/publish', async (c) => {
     [id, status, target, schema],
   );
 
-  return c.json({ status, url: publishedUrl(id) });
+  return c.json({ status, url: publishedUrl(id), firstTime });
 });
 
 /** 发布状态（前端轮询直到 running） */

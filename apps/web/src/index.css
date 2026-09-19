@@ -1,31 +1,14 @@
 @import 'tailwindcss';
 
+/* 字体自托管（同源，无外部请求；中文按 unicode-range 分片按需下载） */
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+@import '@fontsource-variable/noto-sans-sc';
+
+/* 设计 token（双主题 / 蓝图网格 / 基础样式） */
+@import './styles/tokens.css';
+
 /* 让 Tailwind 扫描 Streamdown 及其插件的类名（路径相对本 CSS 文件） */
 @source "../node_modules/streamdown/dist/*.js";
 @source "../node_modules/@streamdown/code/dist/*.js";
 @source "../node_modules/@streamdown/cjk/dist/*.js";
-
-:root {
-  color-scheme: light dark;
-}
-
-html,
-body,
-#root {
-  height: 100%;
-}
-
-body {
-  margin: 0;
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    Roboto,
-    'Helvetica Neue',
-    Arial,
-    'PingFang SC',
-    'Microsoft YaHei',
-    sans-serif;
-}

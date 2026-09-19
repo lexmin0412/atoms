@@ -1,31 +1,131 @@
-import type { ProjectDto, UserDto } from '@atoms/shared';
-import { useEffect, useState } from 'react';
+import type { ProjectDto } from '@atoms/shared';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import CreditsBadge from '../components/CreditsBadge';
+import { Button } from '../components/ui/Button';
+import { ConfirmDialog, PromptDialog } from '../components/ui/confirm';
+import { Field } from '../components/ui/Field';
+import { IconPlus } from '../components/ui/icons';
+import { AtomsMark } from '../components/ui/Logo';
 import { api } from '../lib/api';
+import { cx } from '../lib/cx';
 
-export default function Projects({
-  user,
-  onLogout,
+/** 由项目 id 派生一个稳定的色相（限制在暖中性区间，避免花） */
+function hueOf(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i += 1) h = (h * 31 + id.charCodeAt(i)) % 360;
+  return 20 + (h % 60); // 20–80：暖橙 → 琥珀 → 黄绿
+}
+
+function fmtDate(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`;
+}
+
+/** 项目缩略图：优先用应用自己的图标（Agent 生成的 icon.svg），否则用确定性占位 */
+function Thumb({ id, className }: { id: string; className?: string }) {
+  const hue = hueOf(id);
+  const [hasIcon, setHasIcon] = useState(true);
+  return (
+    <div className={cx('relative aspect-[16/10] overflow-hidden bg-surface', className)}>
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundImage: `radial-gradient(120% 90% at 25% 0%, oklch(0.88 0.05 ${hue} / 13%), transparent 62%), linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px)`,
+          backgroundSize: '100% 100%, 20px 20px, 20px 20px',
+        }}
+        aria-hidden
+      />
+      <div className="absolute inset-0 grid place-items-center">
+        {hasIcon ? (
+          <img
+            src={`/api/projects/${id}/icon`}
+            alt=""
+            loading="lazy"
+            onError={() => setHasIcon(false)}
+            className="size-11 rounded-sm object-contain drop-shadow-[0_1px_2px_oklch(0_0_0/12%)]"
+          />
+        ) : (
+          <span className="text-muted-foreground/35">
+            <AtomsMark size={34} />
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CardMenu({
+  onOpen,
+  onRename,
+  onDelete,
 }: {
-  user: UserDto;
-  onLogout: () => void;
+  onOpen: () => void;
+  onRename: () => void;
+  onDelete: () => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+  return (
+    <div className="relative" ref={ref} onClick={(e) => e.stopPropagation()}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-label="更多操作"
+        className="text-muted-foreground hover:bg-muted hover:text-foreground grid size-7 place-items-center rounded-xs transition-colors"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="panel-raised absolute right-0 z-30 mt-1 w-32 py-1">
+          {[
+            { label: '打开', fn: onOpen },
+            { label: '重命名', fn: onRename },
+            { label: '删除', fn: onDelete, danger: true },
+          ].map((it) => (
+            <button
+              key={it.label}
+              onClick={() => {
+                setOpen(false);
+                it.fn();
+              }}
+              className={cx(
+                'block w-full px-3 py-1.5 text-left text-[12.5px] transition-colors',
+                it.danger ? 'text-danger hover:bg-danger/10' : 'hover:bg-muted',
+              )}
+            >
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function Projects() {
   const nav = useNavigate();
   const [projects, setProjects] = useState<ProjectDto[]>([]);
-  const [title, setTitle] = useState('');
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
+  const [renaming, setRenaming] = useState<ProjectDto | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [deleting, setDeleting] = useState<ProjectDto | null>(null);
 
   async function refresh() {
-    setLoading(true);
-    try {
-      const r = await api.listProjects();
-      setProjects(r.projects);
-    } finally {
-      setLoading(false);
-    }
+    const r = await api.listProjects().catch(() => ({ projects: [] as ProjectDto[] }));
+    setProjects(r.projects);
   }
 
   useEffect(() => {
@@ -35,6 +135,7 @@ export default function Projects({
       .then((r) => {
         if (alive) setProjects(r.projects);
       })
+      .catch(() => {})
       .finally(() => {
         if (alive) setLoading(false);
       });
@@ -45,100 +146,159 @@ export default function Projects({
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!title.trim() || busy) return;
     setBusy(true);
     try {
       const r = await api.createProject(title.trim());
       setTitle('');
+      setCreating(false);
       nav(`/p/${r.project.id}`);
     } finally {
       setBusy(false);
     }
   }
 
-  async function logout() {
-    await api.logout().catch(() => {});
-    onLogout();
-  }
-
   async function rename(p: ProjectDto) {
-    const t = window.prompt('重命名项目', p.title);
-    if (!t || t.trim() === p.title) return;
-    await api.renameProject(p.id, t.trim()).catch(() => {});
+    const name = renameValue.trim();
+    if (name) await api.renameProject(p.id, name).catch(() => {});
+    setRenaming(null);
     refresh();
   }
 
   async function remove(p: ProjectDto) {
-    if (!window.confirm(`删除项目「${p.title}」？此操作不可恢复。`)) return;
     await api.deleteProject(p.id).catch(() => {});
+    setDeleting(null);
     refresh();
   }
 
   return (
-    <div className="mx-auto min-h-full max-w-3xl p-6">
-      <header className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">Atoms</h1>
-          <p className="text-sm text-neutral-500">{user.username}</p>
-        </div>
-        <div className="flex items-center gap-4">
-          <CreditsBadge />
-          <button
-            onClick={logout}
-            className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
-          >
-            退出
-          </button>
-        </div>
-      </header>
-
-      <form onSubmit={create} className="mb-6 flex gap-2">
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="新建项目，例如：一个待办清单"
-          className="flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-        />
-        <button
-          disabled={busy || !title.trim()}
-          className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-        >
-          创建
-        </button>
-      </form>
+    <div className="mx-auto w-full max-w-6xl px-8 py-9">
+      <div className="mb-7 flex items-center justify-between gap-4">
+        <h1 className="text-[22px] font-semibold tracking-[-0.02em]">我的项目</h1>
+        <Button variant="primary" onClick={() => setCreating(true)}>
+          <IconPlus />
+          新建项目
+        </Button>
+      </div>
 
       {loading ? (
-        <p className="text-sm text-neutral-500">加载中…</p>
-      ) : projects.length === 0 ? (
-        <p className="text-sm text-neutral-500">还没有项目，创建一个开始吧。</p>
-      ) : (
-        <ul className="divide-y divide-neutral-200 rounded-xl border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-          {projects.map((p) => (
-            <li key={p.id} className="group flex items-center">
-              <button
-                onClick={() => nav(`/p/${p.id}`)}
-                className="flex flex-1 items-center justify-between px-4 py-3 text-left hover:bg-neutral-50 dark:hover:bg-neutral-900"
-              >
-                <span className="text-sm font-medium">{p.title}</span>
-                <span className="text-xs text-neutral-400">{p.status}</span>
-              </button>
-              <div className="flex items-center gap-1 pr-3 opacity-0 transition group-hover:opacity-100">
-                <button
-                  onClick={() => rename(p)}
-                  className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                >
-                  重命名
-                </button>
-                <button
-                  onClick={() => remove(p)}
-                  className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
-                >
-                  删除
-                </button>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="panel overflow-hidden">
+              <div className="bg-muted aspect-[16/10] animate-pulse" />
+              <div className="space-y-2 p-3">
+                <div className="bg-muted h-3 w-2/3 animate-pulse rounded-xs" />
+                <div className="bg-muted h-2.5 w-1/3 animate-pulse rounded-xs" />
               </div>
-            </li>
+            </div>
           ))}
-        </ul>
+        </div>
+      ) : projects.length === 0 ? (
+        <div className="panel flex flex-col items-center px-6 py-20 text-center">
+          <span style={{ color: 'var(--accent-ink)' }}>
+            <AtomsMark size={32} />
+          </span>
+          <p className="mt-4 text-[14px] font-medium">还没有项目</p>
+          <p className="text-muted-foreground mt-1.5 max-w-[36ch] text-[12.5px] leading-relaxed">
+            描述你想做的东西，比如「一个番茄钟」或「一个数据看板」，Agent
+            会在真实沙箱里把它做出来。
+          </p>
+          <Button variant="primary" className="mt-5" onClick={() => setCreating(true)}>
+            <IconPlus />
+            新建项目
+          </Button>
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {projects.map((p) => (
+            <div
+              key={p.id}
+              onClick={() => nav(`/p/${p.id}`)}
+              className="panel group hover:border-border-strong cursor-pointer overflow-hidden transition-colors"
+            >
+              <Thumb id={p.id} className="border-border rounded-none border-0 border-b" />
+              <div className="flex items-center gap-2 px-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium">{p.title}</p>
+                  <p className="tnum text-muted-foreground mt-0.5 text-[11.5px]">
+                    {fmtDate(p.updatedAt)}
+                  </p>
+                </div>
+                <div className="opacity-0 transition-opacity group-hover:opacity-100">
+                  <CardMenu
+                    onOpen={() => nav(`/p/${p.id}`)}
+                    onRename={() => {
+                      setRenameValue(p.title);
+                      setRenaming(p);
+                    }}
+                    onDelete={() => setDeleting(p)}
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <PromptDialog
+        open={!!renaming}
+        title="重命名项目"
+        value={renameValue}
+        onChange={setRenameValue}
+        placeholder="项目名称"
+        onConfirm={() => {
+          if (renaming) return rename(renaming);
+        }}
+        onCancel={() => setRenaming(null)}
+      />
+
+      <ConfirmDialog
+        open={!!deleting}
+        title={`删除项目「${deleting?.title ?? ''}」？`}
+        description="项目源码、数据库表与已发布的应用都会被移除，此操作不可恢复。"
+        confirmText="删除"
+        danger
+        onConfirm={() => {
+          if (deleting) return remove(deleting);
+        }}
+        onCancel={() => setDeleting(null)}
+      />
+
+      {creating && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 backdrop-blur-[1px]">
+          <form onSubmit={create} className="panel-raised w-96 p-5">
+            <p className="mb-1 text-[14px] font-medium">新建项目</p>
+            <p className="text-muted-foreground mb-4 text-[12px]">
+              一句话描述你想做的东西，细节可以之后再聊。
+            </p>
+            <Field
+              autoFocus
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onKeyDown={(e) => e.key === 'Escape' && setCreating(false)}
+              placeholder="例如：一个带统计的番茄钟"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setCreating(false)}
+              >
+                取消
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                variant="primary"
+                loading={busy}
+                disabled={!title.trim()}
+              >
+                创建
+              </Button>
+            </div>
+          </form>
+        </div>
       )}
     </div>
   );

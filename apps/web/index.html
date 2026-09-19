@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Atoms</title>
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#191c22" media="(prefers-color-scheme: dark)" />
+    <script>
+      // 首屏防闪：在 React 挂载前先按用户偏好落 .dark
+      (function () {
+        try {
+          var m = localStorage.getItem('atoms:theme');
+          var dark =
+            m === 'dark' ||
+            (m !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          var r = document.documentElement;
+          if (dark) r.classList.add('dark');
+          r.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
