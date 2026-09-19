@@ -9,6 +9,7 @@ import {
 import { Hono } from 'hono';
 
 import { model, SYSTEM_PROMPT } from '../agent';
+import { clearBusy, markBusy } from '../agent-busy';
 import { requireUser } from '../auth';
 import { config } from '../config';
 import { query } from '../db';
@@ -93,6 +94,9 @@ chatRoutes.post('/:id/chat', async (c) => {
     throw err;
   }
 
+  markBusy(projectId);
+  setTimeout(() => clearBusy(projectId), 10 * 60 * 1000).unref();
+
   const stream = createUIMessageStream({
     originalMessages: uiMessages,
     execute: async ({ writer }) => {
@@ -127,9 +131,22 @@ chatRoutes.post('/:id/chat', async (c) => {
         console.error('[chat] snapshot error:', err);
       }
       await query('update projects set updated_at = now() where id = $1', [projectId]);
+      clearBusy(projectId);
     },
     onError: (err) => {
       console.error('[chat] stream error:', err);
+      clearBusy(projectId);
+      // 上游中断时 onEnd 的快照可能早于工具写入完成 —— 延迟再补一次，
+      // 否则这一轮写进沙箱的文件会没落库（表现为文件树为空）。
+      setTimeout(() => {
+        snapshotProject(projectId)
+          .then((f) =>
+            console.log(
+              `[chat] 中断补偿快照 ${projectId}: ${Object.keys(f).length} 个文件`,
+            ),
+          )
+          .catch((e) => console.error('[chat] 中断补偿快照失败:', e));
+      }, 3000);
       const msg = err instanceof Error ? err.message : String(err);
       if (/MissingSessionID|401|403/i.test(msg)) {
         return '模型服务鉴权失败，请联系管理员。';

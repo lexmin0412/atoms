@@ -7,8 +7,13 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      message?: string;
+    };
+    const err = new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+    (err as Error & { code?: string }).code = body.error;
+    throw err;
   }
   return (await res.json()) as T;
 }
@@ -24,6 +29,15 @@ export interface UsageResponse {
     weekly?: UsageWindow;
     monthly?: UsageWindow;
   };
+}
+
+export interface TreeNode {
+  id: string;
+  pid: string | null;
+  name: string;
+  type: 'file' | 'dir';
+  path: string;
+  version: number;
 }
 
 export const api = {
@@ -57,11 +71,39 @@ export const api = {
     req<{ messages: { id: string; seq: number; role: string; parts: unknown[] }[] }>(
       `/api/projects/${id}/messages`,
     ),
-  tree: (id: string) => req<{ files: string[] }>(`/api/projects/${id}/tree`),
+  tree: (id: string) =>
+    req<{ nodes: TreeNode[]; busy: boolean }>(`/api/projects/${id}/tree`),
   file: (id: string, path: string) =>
-    req<{ path: string; content: string }>(
+    req<{ path: string; content: string; version: number }>(
       `/api/projects/${id}/file?path=${encodeURIComponent(path)}`,
     ),
+  createFile: (
+    id: string,
+    d: { parentId: string | null; name: string; content?: string },
+  ) =>
+    req<{ node: TreeNode }>(`/api/projects/${id}/fs/file`, {
+      method: 'POST',
+      body: JSON.stringify(d),
+    }),
+  createDir: (id: string, d: { parentId: string | null; name: string }) =>
+    req<{ node: TreeNode }>(`/api/projects/${id}/fs/dir`, {
+      method: 'POST',
+      body: JSON.stringify(d),
+    }),
+  saveFile: (id: string, nodeId: string, content: string, version: number) =>
+    req<{ version: number }>(`/api/projects/${id}/fs/file/${nodeId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ content, version }),
+    }),
+  renameNode: (id: string, nodeId: string, name: string, parentId?: string | null) =>
+    req<{ path: string }>(`/api/projects/${id}/fs/node/${nodeId}/rename`, {
+      method: 'PUT',
+      body: JSON.stringify({ name, parentId }),
+    }),
+  deleteNode: (id: string, nodeId: string) =>
+    req<{ ok: boolean }>(`/api/projects/${id}/fs/node/${nodeId}`, { method: 'DELETE' }),
+  rebuild: (id: string) =>
+    req<{ ok: boolean; log?: string }>(`/api/projects/${id}/rebuild`, { method: 'POST' }),
   usage: () => req<UsageResponse>('/api/usage'),
   previewVersion: (id: string) =>
     req<{ version: string }>(`/api/projects/${id}/preview-version`),

@@ -11,6 +11,7 @@ import {
   releaseReady,
   listReleaseIds,
   startDevApp,
+  stopDevApp,
   devAppReady,
   devAppTarget,
 } from './release';
@@ -21,6 +22,7 @@ import {
   isSandboxRunning,
   readWsFile,
   writeWsFile,
+  removeWsPath,
   listWsFiles,
   snapshotWorkspace,
   readDistFile,
@@ -104,6 +106,13 @@ app.put('/sandbox/:id/file', async (c) => {
   return c.json({ ok: true });
 });
 
+app.delete('/sandbox/:id/file', async (c) => {
+  const path = c.req.query('path');
+  if (!path) return c.json({ error: 'path_required' }, 400);
+  await removeWsPath(c.req.param('id'), path);
+  return c.json({ ok: true });
+});
+
 app.get('/sandbox/:id/files', async (c) => {
   return c.json({ files: await listWsFiles(c.req.param('id')) });
 });
@@ -143,6 +152,7 @@ app.post('/sandbox/:id/dist-snapshot', async (c) => {
 });
 
 app.delete('/sandbox/:id', async (c) => {
+  await stopDevApp(c.req.param('id')).catch(() => {});
   await destroySandbox(c.req.param('id'));
   forget(c.req.param('id'));
   return c.json({ ok: true });
@@ -208,6 +218,14 @@ app.post('/sandbox/:id/devapp', async (c) => {
   const parsed = (await c.req.json().catch(() => ({}))) as { databaseUrl?: string };
   await startDevApp(id, parsed.databaseUrl ?? '');
   return c.json({ status: 'starting' });
+});
+
+/** 强制重启开发应用后端（加载最新源码） */
+app.post('/sandbox/:id/devapp/restart', async (c) => {
+  const id = c.req.param('id') ?? '';
+  const parsed = (await c.req.json().catch(() => ({}))) as { databaseUrl?: string };
+  await startDevApp(id, parsed.databaseUrl ?? '', true);
+  return c.json({ status: 'restarting' });
 });
 
 app.get('/sandbox/:id/devapp/status', async (c) => {

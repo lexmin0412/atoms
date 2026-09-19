@@ -164,10 +164,11 @@ export async function releaseReady(
   }
 }
 
-// ---- 开发预览用的应用后端（跑在【开发沙箱容器】内，独立端口）----
+// ---- 开发预览用的应用后端 ----
+// 跑在【独立容器】里（挂载同一开发工作区），便于「重新构建」时干净重启。
 
-function devContainerName(id: string) {
-  return `atoms-${id}`;
+function devAppContainerName(id: string) {
+  return `atoms-devapp-${id}`;
 }
 
 async function containerIp(name: string): Promise<string> {
@@ -185,38 +186,63 @@ async function containerIp(name: string): Promise<string> {
   }
 }
 
-/** 在开发沙箱容器内启动应用后端（detached），监听 devAppPort */
-export async function startDevApp(id: string, databaseUrl: string): Promise<void> {
-  const name = devContainerName(id);
-  const ip = await containerIp(name);
-  if (!ip) throw new Error('dev sandbox not running');
-
-  // 已在跑则不重复启动
-  try {
-    const res = await fetch(`http://${ip}:${config.devAppPort}/api/health`, {
-      signal: AbortSignal.timeout(1500),
-    });
-    if (res.ok) return;
-  } catch {
-    // 未就绪，继续启动
+/** 启动（或强制重启）开发预览后端容器；运行【开发工作区】的最新源码 */
+export async function startDevApp(
+  id: string,
+  databaseUrl: string,
+  force = false,
+): Promise<void> {
+  const name = devAppContainerName(id);
+  if (force) {
+    await docker(['rm', '-f', name]).catch(() => {});
+  } else if (await containerIp(name)) {
+    return; // 已在跑
   }
 
-  const script = [
-    'cd /workspace',
-    'pnpm install --prefer-offline >/tmp/devapp-install.log 2>&1 || true',
-    `export PORT=${config.devAppPort} HOST=0.0.0.0 DATABASE_URL='${databaseUrl}'`,
-    'setsid pnpm --filter ./apps/api start >/tmp/devapp.log 2>&1 < /dev/null &',
-  ].join('\n');
+  const store = join(config.root, '.pnpm-store');
+  await docker([
+    'run',
+    '-d',
+    '--name',
+    name,
+    `--memory=${config.memory}`,
+    `--memory-swap=${config.memory}`,
+    '--cpus=1',
+    '--pids-limit=256',
+    '--cap-drop=ALL',
+    '--security-opt=no-new-privileges',
+    '--user',
+    uid(),
+    '--network',
+    config.network,
+    '-v',
+    `${wsDir(id)}:/workspace`,
+    '-v',
+    `${store}:/pnpm-store`,
+    '-e',
+    `PORT=${config.devAppPort}`,
+    '-e',
+    'HOST=0.0.0.0',
+    '-e',
+    `DATABASE_URL=${databaseUrl}`,
+    '-w',
+    '/workspace',
+    config.image,
+    'sh',
+    '-lc',
+    'pnpm install --prefer-offline && pnpm --filter ./apps/api start',
+  ]);
+}
 
-  await docker(['exec', '-d', name, 'sh', '-lc', script]);
+export async function stopDevApp(id: string): Promise<void> {
+  await docker(['rm', '-f', devAppContainerName(id)]).catch(() => {});
 }
 
 /** 开发应用后端是否就绪 */
 export async function devAppReady(
   id: string,
 ): Promise<{ running: boolean; ip: string; ready: boolean }> {
-  const name = devContainerName(id);
-  const ip = await containerIp(name);
+  const ip = await containerIp(devAppContainerName(id));
   if (!ip) return { running: false, ip: '', ready: false };
   try {
     const res = await fetch(`http://${ip}:${config.devAppPort}/api/health`, {
@@ -230,6 +256,6 @@ export async function devAppReady(
 
 /** 开发应用后端地址（供反代） */
 export async function devAppTarget(id: string): Promise<string> {
-  const ip = await containerIp(devContainerName(id));
+  const ip = await containerIp(devAppContainerName(id));
   return ip ? `http://${ip}:${config.devAppPort}` : '';
 }

@@ -1,6 +1,6 @@
 import type { FileMap, Workspace } from '@atoms/shared';
 
-import { pool, query } from '../db';
+import { loadFileMap, saveFileMap } from '../filetree';
 import { ensureDevSchema, databaseUrlFor } from '../release/db';
 import { getRuntime } from './index';
 
@@ -13,13 +13,7 @@ interface Entry {
 const cache = new Map<string, Entry>();
 
 export async function loadProjectFiles(projectId: string): Promise<FileMap> {
-  const r = await query<{ path: string; content: string }>(
-    'select path, content from files where project_id = $1',
-    [projectId],
-  );
-  const map: FileMap = {};
-  for (const row of r.rows) map[row.path] = row.content;
-  return map;
+  return loadFileMap(projectId);
 }
 
 /** 开发沙箱连的是 dev_<短id>，与生产的 app_<短id> 隔离 */
@@ -61,23 +55,7 @@ export async function snapshotProject(projectId: string): Promise<FileMap> {
 }
 
 export async function saveProjectFiles(projectId: string, files: FileMap) {
-  const client = await pool.connect();
-  try {
-    await client.query('begin');
-    await client.query('delete from files where project_id = $1', [projectId]);
-    for (const [path, content] of Object.entries(files)) {
-      await client.query(
-        'insert into files (project_id, path, content) values ($1, $2, $3)',
-        [projectId, path, content],
-      );
-    }
-    await client.query('commit');
-  } catch (err) {
-    await client.query('rollback');
-    throw err;
-  } finally {
-    client.release();
-  }
+  await saveFileMap(projectId, files);
 }
 
 export async function destroyWorkspace(projectId: string) {
@@ -86,5 +64,31 @@ export async function destroyWorkspace(projectId: string) {
   if (hit) {
     await rt.close(hit.ws).catch(() => {});
     cache.delete(projectId);
+  }
+}
+
+/**
+ * 在开发沙箱上执行一次增量同步（写/删文件）。
+ * DB 是唯一事实源：同步失败不应让写请求失败 —— 丢弃工作区缓存，
+ * 下次 acquireWorkspace 会从 DB 全量重建，从而自愈。
+ */
+export async function withWorkspace(
+  projectId: string,
+  fn: (rt: ReturnType<typeof getRuntime>, ws: Workspace) => Promise<void>,
+) {
+  const rt = getRuntime();
+  try {
+    const ws = await acquireWorkspace(projectId);
+    await fn(rt, ws);
+  } catch (err) {
+    console.error('[workspace] sync failed, will resync from DB:', err);
+    cache.delete(projectId);
+    try {
+      const ws = await acquireWorkspace(projectId);
+      await fn(rt, ws);
+    } catch (retryErr) {
+      console.error('[workspace] resync failed (DB 仍为事实源):', retryErr);
+      cache.delete(projectId);
+    }
   }
 }

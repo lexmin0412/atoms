@@ -25,13 +25,7 @@ create table if not exists projects (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists files (
-  project_id uuid not null references projects(id) on delete cascade,
-  path text not null,
-  content text not null default '',
-  updated_at timestamptz not null default now(),
-  primary key (project_id, path)
-);
+-- 注意：files 表由迁移管理（见 migrations/0001-files-tree.sql），不在此定义。
 
 create table if not exists messages (
   id uuid primary key default gen_random_uuid(),

@@ -1,14 +1,24 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 
+import { isBusy } from '../agent-busy';
 import { requireUser } from '../auth';
 import { config } from '../config';
 import { query } from '../db';
+import {
+  createNode,
+  deleteNode,
+  listTree,
+  loadFileMap,
+  readFile,
+  renameNode,
+  updateFile,
+} from '../filetree';
 import { ensureAppSchema, ensureDevSchema, databaseUrlFor } from '../release/db';
 import { publishFrontend } from '../release/frontend';
-import { getSandboxRuntime } from '../runtime';
+import { getRuntime, getSandboxRuntime } from '../runtime';
 import { signedFetch, signedJson } from '../runtime/http';
-import { destroyWorkspace, acquireWorkspace } from '../runtime/manager';
+import { destroyWorkspace, acquireWorkspace, withWorkspace } from '../runtime/manager';
 import type { Env } from './auth';
 
 export const projectRoutes = new Hono<Env>();
@@ -100,16 +110,14 @@ projectRoutes.get('/:id/messages', async (c) => {
   return c.json({ messages: r.rows });
 });
 
-/** 项目文件路径列表（文件树用） */
+/** 项目文件树 */
 projectRoutes.get('/:id/tree', async (c) => {
   const user = c.get('user');
-  const project = await ownedProject(c.req.param('id'), user.id);
+  const id = c.req.param('id');
+  const project = await ownedProject(id, user.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
-  const r = await query<{ path: string }>(
-    'select path from files where project_id = $1 order by path',
-    [c.req.param('id')],
-  );
-  return c.json({ files: r.rows.map((x) => x.path) });
+  const nodes = await listTree(id);
+  return c.json({ nodes, busy: isBusy(id) });
 });
 
 /** 单个文件内容（源码查看用） */
@@ -119,12 +127,215 @@ projectRoutes.get('/:id/file', async (c) => {
   if (!project) return c.json({ error: 'not_found' }, 404);
   const path = c.req.query('path');
   if (!path) return c.json({ error: 'path_required' }, 400);
-  const r = await query<{ content: string }>(
-    'select content from files where project_id = $1 and path = $2',
-    [c.req.param('id'), path],
-  );
-  if (!r.rowCount) return c.json({ error: 'not_found' }, 404);
-  return c.json({ path, content: r.rows[0].content });
+  const file = await readFile(c.req.param('id'), path).catch(() => null);
+  if (file === null) return c.json({ error: 'not_found' }, 404);
+  return c.json({ path, content: file.content, version: file.version });
+});
+
+// ---- 文件管理（写操作：生成中禁止；成功后同步开发沙箱）----
+
+/** 把领域错误映射为 HTTP 响应 */
+function fsError(c: Context<Env>, err: unknown): Response {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg === 'not_found') return c.json({ error: 'not_found' }, 404);
+  if (msg === 'exists')
+    return c.json({ error: 'exists', message: '同名节点已存在' }, 409);
+  if (msg === 'conflict') {
+    return c.json(
+      { error: 'conflict', message: '文件已被更改，请重新加载后再保存' },
+      409,
+    );
+  }
+  if (msg === 'parent_not_found' || msg === 'parent_not_dir') {
+    return c.json({ error: msg, message: '父目录无效' }, 400);
+  }
+  console.error('[fs] error:', err);
+  return c.json({ error: 'fs_failed', message: msg }, 500);
+}
+
+/** 校验写权限：返回错误响应或 null */
+async function guardFsWrite(c: Context<Env>, id: string): Promise<Response | null> {
+  const user = c.get('user');
+  const project = await ownedProject(id, user.id);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+  if (isBusy(id)) {
+    return c.json({ error: 'busy', message: '生成中，暂不能编辑文件' }, 409);
+  }
+  return null;
+}
+
+const nodeName = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((s) => !s.includes('/') && s !== '.' && s !== '..', 'invalid_name');
+
+/** 新建时允许 a/b/c 形式（后端自动建中间目录） */
+const newName = z
+  .string()
+  .min(1)
+  .max(400)
+  .refine((s) => !s.split('/').some((p) => p === '.' || p === '..'), 'invalid_name');
+
+const createNodeSchema = z.object({
+  parentId: z.string().uuid().nullish(),
+  name: newName,
+  content: z.string().optional(),
+});
+
+/** 新建文件 */
+projectRoutes.post('/:id/fs/file', async (c) => {
+  const id = c.req.param('id');
+  const guard = await guardFsWrite(c, id);
+  if (guard) return guard;
+  const parsed = createNodeSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: 'invalid_input' }, 400);
+  try {
+    const node = await createNode(
+      id,
+      parsed.data.parentId ?? null,
+      parsed.data.name,
+      'file',
+      parsed.data.content ?? '',
+    );
+    await withWorkspace(id, (rt, ws) =>
+      rt.writeFile(ws, node.path, parsed.data.content ?? ''),
+    );
+    return c.json({ node }, 201);
+  } catch (err) {
+    return fsError(c, err);
+  }
+});
+
+/** 新建目录（支持空目录） */
+projectRoutes.post('/:id/fs/dir', async (c) => {
+  const id = c.req.param('id');
+  const guard = await guardFsWrite(c, id);
+  if (guard) return guard;
+  const parsed = createNodeSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: 'invalid_input' }, 400);
+  try {
+    const node = await createNode(
+      id,
+      parsed.data.parentId ?? null,
+      parsed.data.name,
+      'dir',
+      '',
+    );
+    return c.json({ node }, 201);
+  } catch (err) {
+    return fsError(c, err);
+  }
+});
+
+/** 保存文件（乐观锁） */
+projectRoutes.put('/:id/fs/file/:nodeId', async (c) => {
+  const id = c.req.param('id');
+  const guard = await guardFsWrite(c, id);
+  if (guard) return guard;
+  const body = await c.req.json().catch(() => null);
+  const parsed = z
+    .object({ content: z.string(), version: z.number().int().nonnegative() })
+    .safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_input' }, 400);
+  const nodeId = c.req.param('nodeId');
+  try {
+    const r = await updateFile(id, nodeId, parsed.data.content, parsed.data.version);
+    const node = await listTree(id).then((ns) => ns.find((n) => n.id === nodeId));
+    if (node) {
+      await withWorkspace(id, (rt, ws) =>
+        rt.writeFile(ws, node.path, parsed.data.content),
+      );
+    }
+    return c.json({ version: r.version });
+  } catch (err) {
+    return fsError(c, err);
+  }
+});
+
+/** 重命名 / 移动 */
+projectRoutes.put('/:id/fs/node/:nodeId/rename', async (c) => {
+  const id = c.req.param('id');
+  const guard = await guardFsWrite(c, id);
+  if (guard) return guard;
+  const body = await c.req.json().catch(() => null);
+  const parsed = z
+    .object({ name: nodeName, parentId: z.string().uuid().nullish() })
+    .safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_input' }, 400);
+  const nodeId = c.req.param('nodeId');
+  try {
+    const r = await renameNode(id, nodeId, parsed.data.name, parsed.data.parentId);
+    const map = await loadFileMap(id);
+    await withWorkspace(id, async (rt, ws) => {
+      for (const m of r.moves) {
+        await rt.deleteFile(ws, m.from);
+        if (map[m.to] !== undefined) await rt.writeFile(ws, m.to, map[m.to]);
+      }
+    });
+    return c.json({ path: r.path });
+  } catch (err) {
+    return fsError(c, err);
+  }
+});
+
+/** 删除（目录递归） */
+projectRoutes.delete('/:id/fs/node/:nodeId', async (c) => {
+  const id = c.req.param('id');
+  const guard = await guardFsWrite(c, id);
+  if (guard) return guard;
+  try {
+    const r = await deleteNode(id, c.req.param('nodeId'));
+    await withWorkspace(id, async (rt, ws) => {
+      for (const p of r.files) await rt.deleteFile(ws, p);
+    });
+    return c.json({ ok: true });
+  } catch (err) {
+    return fsError(c, err);
+  }
+});
+
+/** 重新构建：前端构建 + 重启开发预览后端 */
+projectRoutes.post('/:id/rebuild', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const project = await ownedProject(id, user.id);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+  if (isBusy(id)) return c.json({ error: 'busy', message: '生成中，请稍后再构建' }, 409);
+
+  const schema = await ensureDevSchema(id);
+  const rt = getSandboxRuntime();
+  await acquireWorkspace(id).catch(() => {});
+
+  const log: string[] = [];
+  try {
+    const ws = await acquireWorkspace(id);
+    for await (const chunk of getRuntime().exec(
+      ws,
+      'cd /workspace && pnpm install --prefer-offline && pnpm -r build',
+    )) {
+      if (chunk.data) log.push(chunk.data);
+      if (chunk.exitCode !== undefined && chunk.exitCode !== 0) {
+        return c.json({ error: 'build_failed', message: log.join('').slice(-4000) }, 500);
+      }
+    }
+    const listing = await signedJson<{ files: string[] }>(`/sandbox/${id}/files`, {
+      method: 'GET',
+    }).catch(() => ({ files: [] as string[] }));
+    if (listing.files.some((f) => f.startsWith('apps/api/'))) {
+      await rt.restartDevApp(id, databaseUrlFor(schema));
+    }
+    return c.json({ ok: true, log: log.join('').slice(-4000) });
+  } catch (err) {
+    return c.json(
+      {
+        error: 'build_failed',
+        message: (err as Error).message,
+        log: log.join('').slice(-4000),
+      },
+      500,
+    );
+  }
 });
 
 /** 预览：把沙箱里 apps/web/dist 的静态产物代理出来（同源 iframe 展示） */

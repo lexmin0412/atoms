@@ -79,6 +79,7 @@ POST   /sandbox                    创建/确保容器
 POST   /sandbox/:id/exec           执行命令（ndjson 流：stdout/stderr/exitCode）
 GET    /sandbox/:id/file?path=     读文件
 PUT    /sandbox/:id/file           写文件
+DELETE /sandbox/:id/file?path=     删除文件/目录（递归）
 GET    /sandbox/:id/files          列出文件
 POST   /sandbox/:id/snapshot       源码快照
 GET    /sandbox/:id/preview[/...]  预览：静态托管 apps/web/dist
@@ -127,11 +128,29 @@ DELETE /sandbox/:id                销毁（含工作区）
 users        (id, email, username, password_hash, created_at)
 sessions     (id, user_id, token, expires_at)
 projects     (id, user_id, title, status, created_at, updated_at)
-files        (project_id, path, content, updated_at)          -- 源码（SSOT）
+files        -- 见下方「文件树」
 messages     (id, project_id, seq, role, parts jsonb, created_at)
 app_releases (project_id, status, frontend_target, container_ip, container_port, db_schema, error, updated_at)
 ```
 **纪律**：平台库只存平台数据与**源码**，绝不存 `node_modules` / `dist` / `.git`。
+
+### 文件树（迭代 004）
+`files` 是**树形结构**（目录与文件都是节点），而非扁平路径：
+
+```sql
+files (id, project_id, pid, name, type['file'|'dir'], path, content, version, updated_at)
+-- unique(project_id, path)；pid 指向父目录节点
+```
+
+- 目录节点有 `pid` / `path`，无 `content`；文件节点有 `content`。
+- **冗余 `path`**：与 Agent 工具、沙箱真实文件系统的「路径」接口衔接；树形 UI 与递归操作（重命名/删除目录）用 `pid`。
+- **`version`**：手动编辑的乐观锁；保存时版本不符返回 409（生成中禁止编辑，双重兜底）。
+- **与沙箱的一致性**：DB 是唯一事实源。手动编辑 → 落库后增量同步沙箱；同步失败则丢弃工作区缓存，下次从 DB 全量重建（`open` 会先清掉沙箱里多出的文件）。
+
+### 数据库迁移（强约束）
+**任何 schema 变更都必须带迁移，且能处理线上已有数据。**
+`apps/api/src/migrations/<NNNN>-<name>.sql`，序号递增、只增不改、幂等；`schema_migrations` 记录已执行项；`db:init` 负责执行。
+破坏性变更（如 `0001-files-tree` 把扁平路径拆成树）必须自带数据搬迁，不得只改 DDL。
 
 ### 平台库 / 应用库分离
 用户项目的业务数据在**独立的应用库**（`atoms_apps`），与平台库物理隔离：
@@ -156,6 +175,11 @@ GET    /api/auth/me
 GET    /api/projects                 POST /api/projects
 GET    /api/projects/:id             PATCH/DELETE /api/projects/:id
 GET    /api/projects/:id/tree | file?path= | messages
+POST   /api/projects/:id/fs/file | fs/dir           新建文件 / 目录（空目录可建）
+PUT    /api/projects/:id/fs/file/:nodeId            保存（乐观锁，409 表示被改动）
+PUT    /api/projects/:id/fs/node/:nodeId/rename     重命名/移动（目录递归）
+DELETE /api/projects/:id/fs/node/:nodeId            删除（目录递归）
+POST   /api/projects/:id/rebuild                    前端构建 + 重启开发预览后端
 POST   /api/projects/:id/chat        发送消息 → SSE（Agent 循环）
 GET    /api/projects/:id/preview[/...]          预览（代理沙箱 dist）
 GET    /api/projects/:id/preview-version        产物版本（前端轮询刷新）
@@ -175,8 +199,16 @@ GET    /api/usage                    系统额度（上游 /v1/usage）
   <Projects/>                项目列表（重命名/删除）
   <Chat/>                    工作台
     ├─ 对话区：Markdown(Streamdown，懒加载) / Reasoning(可折叠) / ToolCard / TerminalBlock
-    └─ 右侧：预览(iframe) / 文件树 + 源码查看 / 发布分享 / 系统额度
+    └─ 右侧：预览(iframe) / 文件管理器 / 数据库查看 / 发布分享 / 系统额度
 ```
+
+**文件管理器（迭代 004）**
+- 树形（`pid` → 层级，目录优先排序），VSCode 风格：右键菜单 + 悬停操作图标 + 顶部工具栏。
+- 支持：新建文件/目录（含空目录）、CodeMirror 编辑（按扩展名高亮，`Cmd/Ctrl+S` 保存）、删除、重命名/移动。
+- **生成中禁止编辑**；保存带 `version` 乐观锁，被 Agent 改动过则返回 409 并提示重新加载。
+- 顶部「重新构建」= 前端 `pnpm -r build` + 重启开发预览后端（dev app 现为独立容器，可干净重启）。
+- CodeMirror 懒加载（仅切到「文件」页时加载），避免拖大首屏包体。
+
 - Markdown 用 **Streamdown**（面向流式），代码高亮 Shiki，中文断词 CJK。
 - 思考内容 `reasoning` part 渲染为可折叠块（思考中展开、结束折叠）。
 - 生成中可「停止」，失败可「重试」。
@@ -186,7 +218,8 @@ GET    /api/usage                    系统额度（上游 /v1/usage）
 ### 预览（开发中）
 - 预览走**独立子域** `dev-<projectId>.atoms.lexmin.cn`：
   - `/` → 经隧道 → B 沙箱服务 → 开发沙箱内的 `apps/web/dist`
-  - `/api/*` → 经隧道 → B 沙箱服务 → 开发沙箱内运行的应用后端（连 `p<id>_dev`）
+  - `/api/*` → 经隧道 → B 沙箱服务 → **独立 devapp 容器**（挂载同一开发工作区，连 `p<id>_dev`）
+- dev app 跑在独立容器（`atoms-devapp-<id>`），便于「重新构建」时干净重启、且不受开发容器生命周期影响。
 - 每轮生成结束后前端自动启动 dev app；`preview-version` 变化即刷新 iframe。
 - **必须独立子域**：若同源（平台域下路径），生成应用里的相对路径 `/api/*` 会落到平台自己的 API，而非项目后端。
 

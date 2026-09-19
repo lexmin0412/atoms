@@ -9,12 +9,51 @@ import { api } from '../lib/api';
 
 // 懒加载：Streamdown + Shiki 体积较大，推迟到首条消息渲染时再加载
 const Markdown = lazy(() => import('../components/Markdown'));
+// 懒加载：CodeMirror + 各语言包体积较大，仅切到「文件」页时加载
+const FileManager = lazy(() => import('../components/FileManager'));
 
 const EXAMPLES = ['做一个番茄钟', '一个待办清单', '一个极简记账本', '一个数据看板'];
 
+/** 分栏：对话宽度约束（px）与左侧最小宽度 */
+const CHAT_MIN = 360;
+const CHAT_MAX = 520;
+const LEFT_MIN = 320;
+const SPLIT_KEY = 'atoms:chat-width-ratio';
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() =>
+    typeof window === 'undefined' ? false : window.matchMedia(query).matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const onChange = (e: MediaQueryListEvent) => setMatches(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}
+
+function clampChatWidth(width: number, containerWidth: number) {
+  const maxChat = Math.min(CHAT_MAX, Math.max(CHAT_MIN, containerWidth - LEFT_MIN));
+  return Math.round(Math.min(Math.max(width, CHAT_MIN), maxChat));
+}
+
 function friendlyError(msg: string): string {
-  if (/busy|429|当前运行中的应用较多|额度|上限/.test(msg)) {
-    return '当前使用人数较多或已达额度上限，请稍后再试。';
+  // 注意：这几种是不同原因，别合并成一句话（否则用户不知道该怎么办）
+  if (/消息上限|24 小时内的消息/.test(msg)) {
+    return '你已用完 24 小时内的消息额度，额度会自动恢复，稍后再试。';
+  }
+  if (/当前运行中的应用较多|busy/.test(msg)) {
+    return '当前并发已满（同时运行的应用较多），请等一会儿再试。';
+  }
+  if (/模型服务繁忙|额度不足/.test(msg)) {
+    return '模型服务繁忙（上游限流），请稍后重试。';
+  }
+  if (/模型服务鉴权失败/.test(msg)) {
+    return msg;
+  }
+  if (/连接中断|ECONNRESET|fetch failed|stream ended|timeout/i.test(msg)) {
+    return '与模型服务的连接中断，请重试。';
   }
   if (/error|failed|fetch|network|stream|timeout/i.test(msg)) {
     return '模型服务暂时不可用，请重试。';
@@ -162,9 +201,7 @@ function renderParts(parts: Part[], animating: boolean) {
 export default function Chat() {
   const { id } = useParams<{ id: string }>();
   const [input, setInput] = useState('');
-  const [files, setFiles] = useState<string[]>([]);
-  const [activeFile, setActiveFile] = useState<string | null>(null);
-  const [fileContent, setFileContent] = useState('');
+  const [fileVersion, setFileVersion] = useState(0);
   const [tab, setTab] = useState<'preview' | 'files' | 'database'>('preview');
   const [previewVersion, setPreviewVersion] = useState(0);
   const [previewSrc, setPreviewSrc] = useState('');
@@ -173,6 +210,23 @@ export default function Chat() {
   const [publishing, setPublishing] = useState(false);
   const [dbAvailable, setDbAvailable] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // ---- 工作台 / 对话 分栏 ----
+  const splitRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  const isWide = useMediaQuery('(min-width: 1024px)');
+  const [containerW, setContainerW] = useState(() =>
+    typeof window === 'undefined' ? 0 : window.innerWidth,
+  );
+  const [ratio, setRatio] = useState(() => {
+    const saved = Number(
+      typeof window === 'undefined' ? '' : window.localStorage.getItem(SPLIT_KEY),
+    );
+    return saved > 0 ? saved : 0;
+  });
+  const [userAdjusted, setUserAdjusted] = useState(() =>
+    typeof window === 'undefined' ? false : !!window.localStorage.getItem(SPLIT_KEY),
+  );
 
   const transport = useMemo(
     () => new DefaultChatTransport({ api: `/api/projects/${id}/chat` }),
@@ -183,6 +237,61 @@ export default function Chat() {
   );
 
   const busy = status === 'submitted' || status === 'streaming';
+
+  // 容器宽度（拖拽与 clamp 的基准）
+  useEffect(() => {
+    const el = splitRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setContainerW(el.getBoundingClientRect().width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // 空状态（无消息）临时加宽对话以保留引导；用户拖过则以用户为准
+  const effectiveRatio = userAdjusted ? ratio : messages.length === 0 ? 0.45 : 0.3;
+  const chatWidth = useMemo(
+    () => (containerW ? clampChatWidth(effectiveRatio * containerW, containerW) : 0),
+    [effectiveRatio, containerW],
+  );
+  const leftWidth = containerW && chatWidth ? containerW - chatWidth : 0;
+
+  function persistRatio(next: number) {
+    setUserAdjusted(true);
+    setRatio(next);
+    window.localStorage.setItem(SPLIT_KEY, String(next));
+  }
+
+  function onDragStart(e: React.PointerEvent<HTMLDivElement>) {
+    draggingRef.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  function onDragMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!draggingRef.current || !splitRef.current) return;
+    const rect = splitRef.current.getBoundingClientRect();
+    const width = clampChatWidth(rect.right - e.clientX, rect.width);
+    persistRatio(width / rect.width);
+  }
+
+  function onDragEnd(e: React.PointerEvent<HTMLDivElement>) {
+    draggingRef.current = false;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  }
+
+  function onDividerKey(e: React.KeyboardEvent<HTMLDivElement>) {
+    const step = e.key === 'ArrowLeft' ? 24 : e.key === 'ArrowRight' ? -24 : 0;
+    if (!step || !containerW) return;
+    e.preventDefault();
+    persistRatio(clampChatWidth(chatWidth + step, containerW) / containerW);
+  }
+
+  function resetDivider() {
+    window.localStorage.removeItem(SPLIT_KEY);
+    setUserAdjusted(false);
+    setRatio(0);
+  }
 
   // 生成过程中轮询构建产物版本，一旦变化就刷新预览（实时化）
   useEffect(() => {
@@ -197,22 +306,6 @@ export default function Chat() {
     }, 3000);
     return () => clearInterval(t);
   }, [id, busy]);
-
-  async function refreshTree() {
-    if (!id) return;
-    const r = await api.tree(id).catch(() => ({ files: [] as string[] }));
-    setFiles(r.files);
-    if (!activeFile && r.files.length) {
-      openFile(r.files[0]);
-    }
-  }
-
-  async function openFile(path: string) {
-    if (!id) return;
-    setActiveFile(path);
-    const r = await api.file(id, path).catch(() => ({ path, content: '' }));
-    setFileContent(r.content);
-  }
 
   async function publish() {
     if (!id || publishing) return;
@@ -245,7 +338,7 @@ export default function Chat() {
     return () => clearInterval(t);
   }, [id, deploy?.status]);
 
-  // 载入历史消息 + 文件树
+  // 载入历史消息 + 预览信息
   useEffect(() => {
     if (!id) return;
     api
@@ -260,7 +353,6 @@ export default function Chat() {
         ),
       )
       .catch(() => {});
-    refreshTree();
     api
       .previewUrl(id)
       .then((r) => setPreviewSrc(r.url))
@@ -277,8 +369,7 @@ export default function Chat() {
   // 每轮结束后刷新文件树、当前文件与预览
   useEffect(() => {
     if (status === 'ready') {
-      refreshTree();
-      if (activeFile) openFile(activeFile);
+      setFileVersion((v) => v + 1);
       setPreviewVersion((v) => v + 1);
       if (id) {
         // 预览用独立子域；若有后端则启动开发应用（/api 才通）
@@ -309,112 +400,18 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex h-full">
-      {/* 左：对话 */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-3 border-b border-neutral-200 px-4 py-2 dark:border-neutral-800">
-          <Link
-            to="/"
-            className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
-          >
-            ← 返回
-          </Link>
-          <h1 className="text-sm font-medium">对话</h1>
-          <button
-            onClick={() => setShowPanel((v) => !v)}
-            className="ml-auto rounded border border-neutral-300 px-2 py-1 text-xs md:hidden dark:border-neutral-700"
-          >
-            {showPanel ? '收起' : '预览/文件'}
-          </button>
-        </header>
-
-        <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-          {messages.length === 0 && (
-            <div className="text-sm text-neutral-500">
-              <p className="mb-3">描述你想创建的应用，或从下面选一个开始：</p>
-              <div className="flex flex-wrap gap-2">
-                {EXAMPLES.map((ex) => (
-                  <button
-                    key={ex}
-                    onClick={() => sendMessage({ text: `帮我${ex}` })}
-                    className="rounded-full border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
-                  >
-                    {ex}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {messages.map((m, idx) => {
-            const animating =
-              busy && idx === messages.length - 1 && m.role === 'assistant';
-            return (
-              <div
-                key={m.id}
-                className={
-                  m.role === 'user'
-                    ? 'ml-auto max-w-[85%] rounded-2xl bg-neutral-900 px-4 py-2 text-sm whitespace-pre-wrap text-white dark:bg-white dark:text-neutral-900'
-                    : 'max-w-[92%] text-sm'
-                }
-              >
-                {renderParts(m.parts as Part[], animating)}
-              </div>
-            );
-          })}
-          {busy && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-neutral-400">生成中…</span>
-              <button
-                onClick={() => stop()}
-                className="rounded border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
-              >
-                停止
-              </button>
-            </div>
-          )}
-          {error && (
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-red-500">{friendlyError(error.message)}</span>
-              {messages.length > 0 && (
-                <button
-                  onClick={() => regenerate()}
-                  className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
-                >
-                  重试
-                </button>
-              )}
-            </div>
-          )}
-          <div ref={bottomRef} />
-        </div>
-
-        <form
-          onSubmit={submit}
-          className="flex gap-2 border-t border-neutral-200 px-4 py-3 dark:border-neutral-800"
-        >
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="说点什么…"
-            className="flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-          />
-          <button
-            disabled={busy || !input.trim()}
-            className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-          >
-            发送
-          </button>
-        </form>
-      </div>
-
-      {/* 右：预览 / 文件 */}
+    <div ref={splitRef} className="flex h-full">
+      {/* 左：工作台（预览 / 文件 / 数据库） */}
       <div
         className={
-          'shrink-0 flex-col border-neutral-200 dark:border-neutral-800 ' +
-          (showPanel
-            ? 'fixed inset-0 z-30 flex w-full bg-white md:static md:z-auto md:w-[440px] md:border-l dark:bg-neutral-950'
-            : 'hidden md:flex md:w-[440px] md:border-l')
+          'min-w-0 flex-col border-neutral-200 dark:border-neutral-800 ' +
+          (isWide
+            ? 'flex border-r'
+            : showPanel
+              ? 'fixed inset-0 z-30 flex bg-white dark:bg-neutral-950'
+              : 'hidden')
         }
+        style={isWide && leftWidth ? { width: leftWidth } : undefined}
       >
         <div className="flex items-center gap-1 border-b border-neutral-200 px-2 py-1.5 dark:border-neutral-800">
           <button
@@ -533,41 +530,133 @@ export default function Chat() {
         ) : tab === 'database' ? (
           <DatabaseView projectId={id as string} />
         ) : (
-          <div className="flex min-h-0 flex-1">
-            <div className="w-44 shrink-0 overflow-y-auto border-r border-neutral-200 py-2 text-xs dark:border-neutral-800">
-              {files.length === 0 && <p className="px-3 text-neutral-400">暂无文件</p>}
-              {files.map((f) => (
-                <button
-                  key={f}
-                  onClick={() => openFile(f)}
-                  className={
-                    'block w-full truncate px-3 py-1 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800 ' +
-                    (activeFile === f
-                      ? 'bg-neutral-100 font-medium dark:bg-neutral-800'
-                      : '')
-                  }
-                  title={f}
-                >
-                  {f}
-                </button>
-              ))}
+          <Suspense
+            fallback={<p className="p-3 text-xs text-neutral-400">加载编辑器…</p>}
+          >
+            <FileManager key={fileVersion} projectId={id as string} busy={busy} />
+          </Suspense>
+        )}
+      </div>
+
+      {/* 分隔条：拖动调整对话宽度（双击复位） */}
+      {isWide && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整对话宽度"
+          tabIndex={0}
+          onPointerDown={onDragStart}
+          onPointerMove={onDragMove}
+          onPointerUp={onDragEnd}
+          onPointerCancel={onDragEnd}
+          onDoubleClick={resetDivider}
+          onKeyDown={onDividerKey}
+          className="relative w-px shrink-0 cursor-col-resize bg-neutral-200 outline-none hover:bg-neutral-400 focus-visible:bg-neutral-500 dark:bg-neutral-800 dark:hover:bg-neutral-600"
+        >
+          <span className="absolute inset-y-0 -right-1 -left-1" />
+        </div>
+      )}
+
+      {/* 右：对话 */}
+      <div
+        className={
+          'flex min-w-0 flex-col ' + (isWide ? '' : showPanel ? 'hidden' : 'flex flex-1')
+        }
+        style={isWide && chatWidth ? { width: chatWidth } : undefined}
+      >
+        <header className="flex items-center gap-3 border-b border-neutral-200 px-4 py-2 dark:border-neutral-800">
+          <Link
+            to="/"
+            className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+          >
+            ← 返回
+          </Link>
+          <h1 className="text-sm font-medium">对话</h1>
+          <button
+            onClick={() => setShowPanel((v) => !v)}
+            className="ml-auto rounded border border-neutral-300 px-2 py-1 text-xs lg:hidden dark:border-neutral-700"
+          >
+            {showPanel ? '收起' : '预览/文件'}
+          </button>
+        </header>
+
+        <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+          {messages.length === 0 && (
+            <div className="text-sm text-neutral-500">
+              <p className="mb-3">描述你想创建的应用，或从下面选一个开始：</p>
+              <div className="flex flex-wrap gap-2">
+                {EXAMPLES.map((ex) => (
+                  <button
+                    key={ex}
+                    onClick={() => sendMessage({ text: `帮我${ex}` })}
+                    className="rounded-full border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                  >
+                    {ex}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="min-w-0 flex-1 overflow-auto">
-              {activeFile ? (
-                <>
-                  <div className="sticky top-0 border-b border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900">
-                    {activeFile}
-                  </div>
-                  <pre className="p-3 text-xs leading-relaxed whitespace-pre-wrap">
-                    {fileContent}
-                  </pre>
-                </>
-              ) : (
-                <p className="p-3 text-xs text-neutral-400">选择文件查看源码</p>
+          )}
+          {messages.map((m, idx) => {
+            const animating =
+              busy && idx === messages.length - 1 && m.role === 'assistant';
+            return (
+              <div
+                key={m.id}
+                className={
+                  m.role === 'user'
+                    ? 'ml-auto max-w-[85%] rounded-2xl bg-neutral-900 px-4 py-2 text-sm whitespace-pre-wrap text-white dark:bg-white dark:text-neutral-900'
+                    : 'max-w-[92%] text-sm'
+                }
+              >
+                {renderParts(m.parts as Part[], animating)}
+              </div>
+            );
+          })}
+          {busy && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">生成中…</span>
+              <button
+                onClick={() => stop()}
+                className="rounded border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+              >
+                停止
+              </button>
+            </div>
+          )}
+          {error && (
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-red-500">{friendlyError(error.message)}</span>
+              {messages.length > 0 && (
+                <button
+                  onClick={() => regenerate()}
+                  className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
+                >
+                  重试
+                </button>
               )}
             </div>
-          </div>
-        )}
+          )}
+          <div ref={bottomRef} />
+        </div>
+
+        <form
+          onSubmit={submit}
+          className="flex gap-2 border-t border-neutral-200 px-4 py-3 dark:border-neutral-800"
+        >
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="说点什么…"
+            className="flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+          <button
+            disabled={busy || !input.trim()}
+            className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+          >
+            发送
+          </button>
+        </form>
       </div>
     </div>
   );

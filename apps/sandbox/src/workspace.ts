@@ -88,14 +88,24 @@ export async function destroySandbox(id: string) {
   await rm(wsDir(id), { recursive: true, force: true }).catch(() => {});
 }
 
-/** 当前运行中的沙箱 id 列表 */
+/**
+ * 当前运行中的开发沙箱 id 列表。
+ * 注意：docker 的 `name=atoms-` 是子串匹配，会连带命中
+ * `atoms-devapp-<id>`（开发预览后端）与 `atoms-release-<id>`（已发布应用），
+ * 这两类不算开发沙箱名额，必须排除，否则并发闸门会被误占满。
+ */
 export async function listRunningSandboxIds(): Promise<string[]> {
   try {
     const out = await docker(['ps', '--filter', 'name=atoms-', '--format', '{{.Names}}']);
     return out
       .split('\n')
       .map((s) => s.trim())
-      .filter(Boolean)
+      .filter(
+        (n) =>
+          n.startsWith('atoms-') &&
+          !n.startsWith('atoms-devapp-') &&
+          !n.startsWith('atoms-release-'),
+      )
       .map((n) => n.replace(/^atoms-/, ''));
   } catch {
     return [];
@@ -154,6 +164,12 @@ export async function writeWsFile(id: string, path: string, content: string) {
   const p = safeJoin(id, path);
   await mkdir(dirname(p), { recursive: true });
   await writeFile(p, content, 'utf8');
+}
+
+/** 删除工作区内的文件或目录（目录递归） */
+export async function removeWsPath(id: string, path: string) {
+  const p = safeJoin(id, path);
+  await rm(p, { recursive: true, force: true });
 }
 
 export async function listWsFiles(id: string): Promise<string[]> {

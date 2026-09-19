@@ -1,4 +1,5 @@
 import { config } from './config';
+import { stopDevApp } from './release';
 import { listRunningSandboxIds, stopSandbox } from './workspace';
 
 // id -> 最后使用时间
@@ -16,6 +17,7 @@ async function reap() {
   const now = Date.now();
   for (const [id, t] of lastUsed) {
     if (now - t > config.idleTtlMs) {
+      await stopDevApp(id).catch(() => {});
       await stopSandbox(id).catch(() => {});
       lastUsed.delete(id);
       console.log(`[reaper] stopped idle sandbox ${id}`);

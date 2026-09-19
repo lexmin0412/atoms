@@ -19,6 +19,9 @@ export class SandboxRuntime implements Runtime {
       body: JSON.stringify({ sandboxId: id, databaseUrl }),
     });
     const ws: Workspace = { id, projectId };
+    // 只写入，不删除：DB 可能因上一轮生成中断而是过期/空的，
+    // 若在此按 DB 清理沙箱，会把尚未落库的成果误删（真实事故）。
+    // 删除由文件管理的显式操作（rename/delete）精确同步。
     for (const [path, content] of Object.entries(files)) {
       await this.writeFile(ws, path, content);
     }
@@ -41,6 +44,12 @@ export class SandboxRuntime implements Runtime {
     await signedJson(`/sandbox/${ws.id}/file`, {
       method: 'PUT',
       body: JSON.stringify({ path, content }),
+    });
+  }
+
+  async deleteFile(ws: Workspace, path: string): Promise<void> {
+    await signedJson(`/sandbox/${ws.id}/file?path=${encodeURIComponent(path)}`, {
+      method: 'DELETE',
     });
   }
 
@@ -145,5 +154,13 @@ export class SandboxRuntime implements Runtime {
     projectId: string,
   ): Promise<{ running: boolean; ip: string; ready: boolean }> {
     return signedJson(`/sandbox/${projectId}/devapp/status`, { method: 'GET' });
+  }
+
+  /** 强制重启开发预览后端（加载最新源码） */
+  async restartDevApp(projectId: string, databaseUrl: string): Promise<void> {
+    await signedJson(`/sandbox/${projectId}/devapp/restart`, {
+      method: 'POST',
+      body: JSON.stringify({ databaseUrl }),
+    });
   }
 }

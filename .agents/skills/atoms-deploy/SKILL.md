@@ -48,13 +48,17 @@ rsync -az -e "ssh -i $HOME/.ssh/<SSH_KEY>" apps/sandbox/src/ ubuntu@<B_HOST>:~/a
 ssh -i "$HOME/.ssh/<SSH_KEY>" ubuntu@<B_HOST> 'sudo systemctl restart atoms-sandbox && systemctl is-active atoms-sandbox'
 ```
 
-### 改了数据库 schema（apps/api/src/schema.sql）
-**顺序很重要：先把新 schema 同步到 A，再在 A 上执行 `db:init`**（否则 A 用的是旧 schema，新表建不出来 → 线上 500）。
+### 改了数据库 schema（apps/api/src/schema.sql 或 migrations/）
+**任何 schema 变更都必须带迁移**（`apps/api/src/migrations/<NNNN>-<name>.sql`，只增不改、幂等、含旧数据搬迁）。
+**顺序很重要：先把代码（含 migrations/）同步到 A，再在 A 上执行 `db:init`**（否则 A 用旧代码，新表/迁移不生效 → 线上 500）。
 ```bash
-rsync -az -e "ssh -o BatchMode=yes" apps/api/src/schema.sql <A_HOST>:~/code/atoms/apps/api/src/schema.sql   # 或整体 rsync
-pnpm --filter @atoms/api db:init                                   # 本地
-ssh ... <A_HOST> 'export PATH="...v22.23.1/..."; cd ~/code/atoms && pnpm --filter @atoms/api db:init'
+rsync -az -e "ssh -o BatchMode=yes" apps/api/src/ <A_HOST>:~/code/atoms/apps/api/src/   # 含 migrations/
+ssh -o BatchMode=yes <A_HOST> 'export PATH="$HOME/.local/share/fnm/node-versions/v22.23.1/installation/bin:$PATH"; cd ~/code/atoms && pnpm --filter @atoms/api db:init'
 ```
+> 迁移前先备份：`\copy (select project_id, path, content from files order by project_id, path) to /tmp/files-before.tsv`；迁移后逐字节 `diff` 验证。
+
+### 改了 sandbox 源码 + api 源码（如新增沙箱路由）
+**先发 B（新路由）再发 A**，否则 A 调 B 的新接口会 404。
 
 ### 重建沙箱镜像（apps/sandbox/docker/Dockerfile）
 ```bash
@@ -85,6 +89,9 @@ ssh ... ubuntu@<B_HOST> 'cd ~/atoms-sandbox && docker build -t atoms-sandbox:lat
 15. **`/srv/atoms-releases` 目录需预先创建并 chown 给 ubuntu**，否则首次发布会 `EACCES: mkdir` 500。
 16. **B 容器内没有 `ps`/`pkill`**（精简镜像）：清理容器内进程要遍历 `/proc/[0-9]*/environ` 匹配环境变量再 `kill`。
 17. **只读角色对“后建的表”无权限**：建 schema 时的 `GRANT SELECT ON ALL TABLES` 只覆盖**当时已存在**的表；应用运行时新建的表没被授权 → 数据库查看报 `permission denied`（生产库尤其明显，因为发布时表还没建）。修复：查询前由 `atoms`（拥有者）**兜底补授权**（`ensureReadable`），或给 `atoms` 配 `ALTER DEFAULT PRIVILEGES ... GRANT SELECT`。
+18. **dev app 是独立容器**（`atoms-devapp-<id>`，挂载同一开发工作区）。它**不受开发沙箱回收器管辖**——回收/销毁开发沙箱时必须一并 `stopDevApp(id)`（`lifecycle.ts` 的 `reap` 与 `DELETE /sandbox/:id` 已处理），否则容器泄漏、且 `rm -rf /srv/atoms/<id>` 会影响其挂载。
+19. **改迁移/表结构后 B 上旧的沙箱工作区仍是旧文件**：A 的 `open` 会先列出沙箱文件、删掉 DB 里不存在的再写入（自愈）。所以**同步失败不要吞掉**——A 会在缓存失效后下次全量重建。
+20. **`pnpm install` 在 A 上会提示 build scripts 被忽略**：正常（根 `.npmrc` 的 `dangerously-allow-all-builds=true` 已放行），只要目标依赖目录存在即可。
 
 ## 验证与健康检查
 
