@@ -66,7 +66,11 @@ export const api = {
   previewVersion: (id: string) =>
     req<{ version: string }>(`/api/projects/${id}/preview-version`),
   publish: (id: string) =>
-    req<{ url: string; token: string }>(`/api/projects/${id}/publish`, {
+    req<{ status: string; url: string }>(`/api/projects/${id}/publish`, {
       method: 'POST',
     }),
+  deployment: (id: string) =>
+    req<{ status: string; url?: string }>(`/api/projects/${id}/deployment`),
+  unpublish: (id: string) =>
+    req<{ ok: boolean }>(`/api/projects/${id}/unpublish`, { method: 'POST' }),
 };

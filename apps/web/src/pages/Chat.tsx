@@ -167,7 +167,7 @@ export default function Chat() {
   const [tab, setTab] = useState<'preview' | 'files'>('preview');
   const [previewVersion, setPreviewVersion] = useState(0);
   const [showPanel, setShowPanel] = useState(false);
-  const [shareUrl, setShareUrl] = useState('');
+  const [deploy, setDeploy] = useState<{ status: string; url?: string } | null>(null);
   const [publishing, setPublishing] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -216,7 +216,7 @@ export default function Chat() {
     setPublishing(true);
     try {
       const r = await api.publish(id);
-      setShareUrl(window.location.origin + r.url);
+      setDeploy({ status: r.status, url: r.url });
     } catch (err) {
       window.alert(
         '发布失败：' + (err instanceof Error ? err.message : '请先让 Agent 成功构建'),
@@ -225,6 +225,22 @@ export default function Chat() {
       setPublishing(false);
     }
   }
+
+  async function unpublish() {
+    if (!id) return;
+    await api.unpublish(id).catch(() => {});
+    setDeploy({ status: 'stopped' });
+  }
+
+  // 发布启动中：轮询到 running
+  useEffect(() => {
+    if (!id || deploy?.status !== 'starting') return;
+    const t = setInterval(async () => {
+      const r = await api.deployment(id).catch(() => null);
+      if (r) setDeploy({ status: r.status, url: r.url });
+    }, 2500);
+    return () => clearInterval(t);
+  }, [id, deploy?.status]);
 
   // 载入历史消息 + 文件树
   useEffect(() => {
@@ -242,6 +258,12 @@ export default function Chat() {
       )
       .catch(() => {});
     refreshTree();
+    api
+      .deployment(id)
+      .then((r) => {
+        if (r.status && r.status !== 'none') setDeploy({ status: r.status, url: r.url });
+      })
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -417,25 +439,51 @@ export default function Chat() {
           </div>
         </div>
 
-        {shareUrl && (
-          <div className="flex items-center gap-2 border-b border-neutral-200 bg-emerald-50 px-3 py-1.5 text-xs dark:border-neutral-800 dark:bg-emerald-950">
-            <span className="shrink-0 text-emerald-700 dark:text-emerald-300">
-              已发布：
-            </span>
-            <a
-              href={shareUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="truncate text-emerald-700 underline dark:text-emerald-300"
-            >
-              {shareUrl}
-            </a>
-            <button
-              onClick={() => navigator.clipboard?.writeText(shareUrl)}
-              className="ml-auto shrink-0 rounded px-2 py-0.5 text-emerald-700 hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-900"
-            >
-              复制
-            </button>
+        {deploy && deploy.status !== 'none' && (
+          <div
+            className={
+              'flex items-center gap-2 border-b border-neutral-200 px-3 py-1.5 text-xs dark:border-neutral-800 ' +
+              (deploy.status === 'running'
+                ? 'bg-emerald-50 dark:bg-emerald-950'
+                : 'bg-neutral-50 dark:bg-neutral-900')
+            }
+          >
+            {deploy.status === 'starting' && (
+              <span className="text-neutral-500">发布启动中…（首次安装依赖，稍候）</span>
+            )}
+            {deploy.status === 'running' && deploy.url && (
+              <>
+                <span className="shrink-0 text-emerald-700 dark:text-emerald-300">
+                  已发布：
+                </span>
+                <a
+                  href={deploy.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="truncate text-emerald-700 underline dark:text-emerald-300"
+                >
+                  {deploy.url}
+                </a>
+                <button
+                  onClick={() => navigator.clipboard?.writeText(deploy.url as string)}
+                  className="shrink-0 rounded px-2 py-0.5 text-emerald-700 hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-900"
+                >
+                  复制
+                </button>
+                <button
+                  onClick={unpublish}
+                  className="ml-auto shrink-0 rounded px-2 py-0.5 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+                >
+                  下架
+                </button>
+              </>
+            )}
+            {deploy.status === 'stopped' && (
+              <span className="text-neutral-500">已下架（点「发布」可重新上线）</span>
+            )}
+            {deploy.status === 'error' && (
+              <span className="text-red-500">发布失败，请重试</span>
+            )}
           </div>
         )}
 

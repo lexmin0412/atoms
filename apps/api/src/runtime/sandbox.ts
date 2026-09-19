@@ -107,4 +107,24 @@ export class SandboxRuntime implements Runtime {
   async previewUrl(_ws: Workspace): Promise<string> {
     return '';
   }
+
+  // ---- 已发布应用（常驻后端容器）----
+
+  /** 启动/重启该应用的常驻后端容器（异步，容器内自行 install 后启动） */
+  async startRelease(projectId: string, databaseUrl: string): Promise<void> {
+    await signedJson(`/sandbox/${projectId}/release`, {
+      method: 'POST',
+      body: JSON.stringify({ databaseUrl }),
+    });
+  }
+
+  async releaseStatus(
+    projectId: string,
+  ): Promise<{ running: boolean; ip: string; ready: boolean }> {
+    return signedJson(`/sandbox/${projectId}/release/status`, { method: 'GET' });
+  }
+
+  async stopRelease(projectId: string): Promise<void> {
+    await signedJson(`/sandbox/${projectId}/release/stop`, { method: 'POST' });
+  }
 }

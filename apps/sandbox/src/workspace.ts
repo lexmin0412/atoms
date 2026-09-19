@@ -7,7 +7,7 @@ import { config, SKIP_DIRS } from './config';
 
 const execFileAsync = promisify(execFile);
 
-async function docker(args: string[]) {
+export async function docker(args: string[]) {
   const { stdout } = await execFileAsync('docker', args, {
     maxBuffer: 50 * 1024 * 1024,
   });

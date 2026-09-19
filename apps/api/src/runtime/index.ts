@@ -9,4 +9,9 @@ export function getRuntime(): Runtime {
   return instance;
 }
 
+export function getSandboxRuntime(): SandboxRuntime {
+  if (!(instance instanceof SandboxRuntime)) instance = new SandboxRuntime();
+  return instance as SandboxRuntime;
+}
+
 export { SandboxRuntime };

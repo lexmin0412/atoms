@@ -1,10 +1,12 @@
-import { randomBytes } from 'node:crypto';
-
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 
 import { requireUser } from '../auth';
-import { pool, query } from '../db';
+import { config } from '../config';
+import { query } from '../db';
+import { ensureAppSchema, databaseUrlFor } from '../release/db';
+import { publishFrontend } from '../release/frontend';
+import { getSandboxRuntime } from '../runtime';
 import { signedFetch, signedJson } from '../runtime/http';
 import { destroyWorkspace } from '../runtime/manager';
 import type { Env } from './auth';
@@ -157,7 +159,7 @@ projectRoutes.get('/:id/preview-version', async (c) => {
   return c.json(await res.json());
 });
 
-/** 一键发布：把构建产物快照到 A，生成公开分享链接 */
+/** 发布：前端产物托管 + 每应用 Postgres schema + 常驻后端容器 */
 projectRoutes.post('/:id/publish', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -177,26 +179,97 @@ projectRoutes.post('/:id/publish', async (c) => {
     );
   }
 
-  const token = randomBytes(9).toString('hex');
-  const client = await pool.connect();
-  try {
-    await client.query('begin');
-    await client.query('insert into deployments (project_id, token) values ($1, $2)', [
-      id,
-      token,
-    ]);
-    for (const [path, b64] of Object.entries(files)) {
-      await client.query(
-        'insert into share_files (token, path, content_b64) values ($1, $2, $3)',
-        [token, path, b64],
-      );
+  const rt = getSandboxRuntime();
+
+  // 1) 前端产物托管（当前写本地目录，由前门 nginx 托管）
+  const target = await publishFrontend(id, files);
+
+  // 2) 判断是否含后端（apps/api）
+  const listing = await signedJson<{ files: string[] }>(`/sandbox/${id}/files`, {
+    method: 'GET',
+  }).catch(() => ({ files: [] as string[] }));
+  const hasBackend = listing.files.some((f) => f.startsWith('apps/api/'));
+
+  // 3) 有后端：每应用一个 Postgres schema + 起常驻后端容器
+  let schema: string | null = null;
+  let status = 'running'; // 纯前端：托管完即可用
+  if (hasBackend) {
+    schema = await ensureAppSchema(id);
+    try {
+      await rt.stopRelease(id);
+      await rt.startRelease(id, databaseUrlFor(schema));
+      status = 'starting';
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('409') || msg.includes('release_limit')) {
+        return c.json(
+          { error: 'release_limit', message: '已发布应用数量已达上限，请先下架其他应用' },
+          409,
+        );
+      }
+      throw err;
     }
-    await client.query('commit');
-  } catch (err) {
-    await client.query('rollback');
-    throw err;
-  } finally {
-    client.release();
   }
-  return c.json({ url: `/share/${token}/`, token });
+
+  await query(
+    `insert into app_releases (project_id, status, frontend_target, db_schema, updated_at)
+     values ($1, $2, $3, $4, now())
+     on conflict (project_id) do update set
+       status = excluded.status, frontend_target = excluded.frontend_target,
+       db_schema = excluded.db_schema, container_ip = null, container_port = null,
+       error = null, updated_at = now()`,
+    [id, status, target, schema],
+  );
+
+  return c.json({ status, url: `https://${id}.atoms.lexmin.cn` });
+});
+
+/** 发布状态（前端轮询直到 running） */
+projectRoutes.get('/:id/deployment', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  if (!id) return c.json({ error: 'id_required' }, 400);
+  const project = await ownedProject(id, user.id);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+
+  const r = await query<{ status: string }>(
+    'select status from app_releases where project_id = $1',
+    [id],
+  );
+  const row = r.rows[0];
+  if (!row) return c.json({ status: 'none' });
+
+  if (row.status === 'starting') {
+    const st = await getSandboxRuntime()
+      .releaseStatus(id)
+      .catch(() => null);
+    if (st?.ready) {
+      await query(
+        `update app_releases
+            set status = 'running', container_ip = $2, container_port = $3, updated_at = now()
+          where project_id = $1`,
+        [id, st.ip, config.releasePort],
+      );
+      return c.json({ status: 'running', url: `https://${id}.atoms.lexmin.cn` });
+    }
+  }
+  return c.json({ status: row.status, url: `https://${id}.atoms.lexmin.cn` });
+});
+
+/** 下架：停容器、释放名额 */
+projectRoutes.post('/:id/unpublish', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  if (!id) return c.json({ error: 'id_required' }, 400);
+  const project = await ownedProject(id, user.id);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+  await getSandboxRuntime()
+    .stopRelease(id)
+    .catch(() => {});
+  await query(
+    `update app_releases set status = 'stopped', container_ip = null, container_port = null, updated_at = now()
+      where project_id = $1`,
+    [id],
+  );
+  return c.json({ ok: true });
 });

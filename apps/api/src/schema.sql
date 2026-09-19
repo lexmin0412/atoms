@@ -46,19 +46,14 @@ create index if not exists messages_project_seq_idx on messages (project_id, seq
 create index if not exists projects_user_idx on projects (user_id);
 create index if not exists sessions_token_idx on sessions (token);
 
--- 发布/分享（静态前端产物）
-create table if not exists deployments (
-  id uuid primary key default gen_random_uuid(),
-  project_id uuid not null references projects(id) on delete cascade,
-  token text unique not null,
-  created_at timestamptz not null default now()
+-- 发布（每个项目至多一个已发布应用，地址 = <projectId>.atoms.lexmin.cn）
+create table if not exists app_releases (
+  project_id uuid primary key references projects(id) on delete cascade,
+  status text not null default 'stopped',   -- running | stopped | error
+  frontend_target text,                      -- 前端产物目标（COS 前缀或本地目录）
+  container_ip text,
+  container_port int,
+  db_schema text,                            -- 该应用的 Postgres schema
+  error text,
+  updated_at timestamptz not null default now()
 );
-
-create table if not exists share_files (
-  token text not null,
-  path text not null,
-  content_b64 text not null,
-  primary key (token, path)
-);
-
-create index if not exists deployments_project_idx on deployments (project_id);

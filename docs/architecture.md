@@ -128,10 +128,10 @@ sessions     (id, user_id, token, expires_at)
 projects     (id, user_id, title, status, created_at, updated_at)
 files        (project_id, path, content, updated_at)          -- 源码（SSOT）
 messages     (id, project_id, seq, role, parts jsonb, created_at)
-deployments  (id, project_id, token, created_at)              -- 发布记录
-share_files  (token, path, content_b64)                       -- 发布的静态产物
+app_releases (project_id, status, frontend_target, container_ip, container_port, db_schema, error, updated_at)  -- 发布记录
 ```
 **纪律**：DB 只存**源码与文本产物**，绝不存 `node_modules` / `dist` / `.git`。
+**已发布应用数据**：每个应用一个独立 schema（`app_<短id>`），与应用源码库表隔离。
 
 ## 7. 后端 API（A / Hono）
 
@@ -144,9 +144,10 @@ GET    /api/projects/:id/tree | file?path= | messages
 POST   /api/projects/:id/chat        发送消息 → SSE（Agent 循环）
 GET    /api/projects/:id/preview[/...]          预览（代理沙箱 dist）
 GET    /api/projects/:id/preview-version        产物版本（前端轮询刷新）
-POST   /api/projects/:id/publish                发布 → 公开分享
+POST   /api/projects/:id/publish                发布 → 独立应用
+GET    /api/projects/:id/deployment             发布状态（前端轮询到 running）
+POST   /api/projects/:id/unpublish              下架
 GET    /api/usage                    系统额度（上游 /v1/usage）
-GET    /share/:token/[...]           公开只读分享（无需登录）
 ```
 - `/chat` 走 SSE；nginx 必须关 buffering。
 - 额度：每用户 24h 消息上限 + 输入长度上限。
@@ -165,11 +166,35 @@ GET    /share/:token/[...]           公开只读分享（无需登录）
 - 思考内容 `reasoning` part 渲染为可折叠块（思考中展开、结束折叠）。
 - 生成中可「停止」，失败可「重试」。
 
-## 9. 预览与分享
+## 9. 预览与发布
 
-- **预览**：`GET /api/projects/:id/preview/` 代理沙箱里 `apps/web/dist`，同源 iframe 展示；前端轮询 `preview-version`，产物变化即刷新。
-- **发布**：`POST /publish` 把 `dist` 快照进 `share_files`，生成 `random token` → 公开链接 `/share/<token>/`（免登录）。
-- **生产建议**：预览/发布改用独立子域（`*.atoms.lexmin.cn`）以彻底隔离同源风险（见 roadmap M9）。
+### 预览（开发中）
+- `GET /api/projects/:id/preview/` 代理沙箱里 `apps/web/dist`，同源 iframe 展示；前端轮询 `preview-version`，产物变化即刷新。
+
+### 发布（独立应用）
+点「发布」→ 得到一个**独立可访问、能真正使用**的线上应用：`https://<projectId>.atoms.lexmin.cn`。
+
+```
+发布
+ → 校验已构建（apps/web/dist）
+ → 前端 dist 上传 COS（<bucket>/apps/<projectId>/，public-read + inline）
+ → 若含 apps/api：确保 Postgres schema app_<短id>，在 B 起【常驻发布容器】
+        （注入 PORT / HOST=0.0.0.0 / DATABASE_URL(search_path=该 schema)）
+ → 写 app_releases
+```
+
+**前门（A 机 nginx，`deploy/nginx/atoms-apps.conf`）**
+- `server_name "~^(?<app>[0-9a-f-]{36})\.atoms\.lexmin\.cn$"`，泛域名证书
+- `/api/*` → 经隧道 → B 沙箱服务 → 该应用常驻容器
+- `/` → 回源 COS
+- 同源 → 无 CORS
+
+**数据隔离**：每个应用一个 Postgres schema（`app_<短id>`），通过连接串 `search_path` 限定；发布容器用 `RELEASE_DATABASE_URL`（A 机公网地址，因容器在 B）连接。
+
+**生命周期**：重新发布（地址不变，重启容器取最新代码）｜下架（停容器、释放名额）｜常驻**上限 5**。
+
+**证书**：acme.sh + DNSPod DNS-01 签 `atoms.lexmin.cn` + `*.atoms.lexmin.cn`，自动续期（安装在 `/etc/nginx/certs/atoms-wildcard/`）。
+
 
 ## 10. 安全
 

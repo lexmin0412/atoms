@@ -22,6 +22,14 @@ export function sign(
 }
 
 export async function hmacAuth(c: Context<SandboxEnv>, next: Next) {
+  // 已发布应用的后端反代（/sandbox/:id/app/*）对公网开放，无需 HMAC；
+  // 且沙箱服务仅监听 127.0.0.1（经 A 机隧道访问），不对外暴露。
+  const url = new URL(c.req.url);
+  if (/^\/sandbox\/[^/]+\/app(\/|$)/.test(url.pathname)) {
+    await next();
+    return;
+  }
+
   if (!config.secret) return c.json({ error: 'server_misconfigured' }, 500);
 
   const ts = c.req.header('x-atoms-ts') ?? '';
@@ -33,7 +41,6 @@ export async function hmacAuth(c: Context<SandboxEnv>, next: Next) {
     return c.json({ error: 'expired' }, 401);
   }
 
-  const url = new URL(c.req.url);
   const pathWithQuery = url.pathname + url.search;
   const body = await c.req.text();
   const expected = sign(config.secret, ts, c.req.method, pathWithQuery, body);

@@ -1,9 +1,16 @@
 import { serve } from '@hono/node-server';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 
 import { hmacAuth, type SandboxEnv } from './auth';
 import { config } from './config';
 import { touch, forget, startReaper } from './lifecycle';
+import {
+  startRelease,
+  stopRelease,
+  releaseStatus,
+  releaseReady,
+  listReleaseIds,
+} from './release';
 import {
   ensureSandbox,
   destroySandbox,
@@ -135,6 +142,58 @@ app.delete('/sandbox/:id', async (c) => {
   forget(c.req.param('id'));
   return c.json({ ok: true });
 });
+
+// ---- 已发布应用：常驻后端容器 + 反代 ----
+
+app.post('/sandbox/:id/release', async (c) => {
+  const id = c.req.param('id');
+  const { databaseUrl } = body<{ databaseUrl?: string }>(c);
+  const running = await listReleaseIds();
+  if (running.length >= config.maxReleases && !running.includes(id)) {
+    return c.json({ error: 'release_limit', max: config.maxReleases }, 409);
+  }
+  await startRelease(id, databaseUrl ?? '');
+  return c.json({ status: 'starting' });
+});
+
+app.get('/sandbox/:id/release/status', async (c) => {
+  return c.json(await releaseReady(c.req.param('id') ?? ''));
+});
+
+app.post('/sandbox/:id/release/stop', async (c) => {
+  await stopRelease(c.req.param('id'));
+  return c.json({ ok: true });
+});
+
+/** 前门 <id>.atoms.lexmin.cn/api/* → 该应用常驻后端容器 */
+async function appProxy(c: Context<SandboxEnv>) {
+  const id = c.req.param('id') ?? '';
+  const st = await releaseStatus(id);
+  if (!st.running || !st.ip) return c.json({ error: 'not_running' }, 503);
+
+  const url = new URL(c.req.url);
+  const prefix = `/sandbox/${id}/app/`;
+  const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : '';
+  const target = `http://${st.ip}:${config.releasePort}/${rest}${url.search}`;
+
+  const headers = new Headers(c.req.raw.headers);
+  headers.delete('host');
+  headers.delete('x-atoms-ts');
+  headers.delete('x-atoms-sig');
+  const init: RequestInit = { method: c.req.method, headers };
+  if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+    init.body = await c.req.arrayBuffer();
+  }
+  const res = await fetch(target, init);
+  const out = new Headers(res.headers);
+  out.delete('content-encoding');
+  out.delete('content-length');
+  out.delete('transfer-encoding');
+  return new Response(res.body, { status: res.status, headers: out });
+}
+
+app.all('/sandbox/:id/app', appProxy);
+app.all('/sandbox/:id/app/*', appProxy);
 
 startReaper().catch((err) => console.error('[reaper] start failed:', err));
 

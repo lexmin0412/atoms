@@ -75,6 +75,12 @@ ssh ... ubuntu@<B_HOST> 'cd ~/atoms-sandbox && docker build -t atoms-sandbox:lat
 9. **别用变量存含空格的 ssh 命令**：zsh 不做分词，`$SSH "cmd"` 会报 “no such file or directory”。直接内联。
 10. **B 机端口不要开公网**：沙箱服务绑 `127.0.0.1`，用 SSH 隧道。`SANDBOX_HOST` 默认 `127.0.0.1`。
 11. **Let's Encrypt 单域名走 HTTP-01**，用 webroot `/var/www/atoms`：`certbot certonly --webroot -w /var/www/atoms -d atoms.lexmin.cn`。泛域名才需要 DNSPod API + DNS-01。
+12. **浏览器把发布页下载而不是渲染**：`curl -I`（HEAD/无 Accept-Encoding）看着是 `Content-Disposition: inline`，但浏览器带 `Accept-Encoding` 时 **COS 会返回 `Content-Disposition: attachment`**（并 `Content-Encoding: gzip`）。前门 nginx 必须 `proxy_hide_header Content-Disposition; add_header Content-Disposition "inline" always;`，并用 `proxy_set_header Accept-Encoding "";` 不让上游压缩。**排查技巧**：用 `curl -H 'Accept-Encoding: gzip, deflate, br'` 复现浏览器行为，别只看普通 `curl -I`。
+13. **发布容器跨机连库**：已发布应用的后端容器跑在 **B 机**，而 Postgres 在 **A 机**，容器里写 `127.0.0.1:9688` 会 `ECONNREFUSED`。必须：
+    - A 的 `.env` 设 `RELEASE_DATABASE_URL=postgres://atoms:***@<A公网>:9688/atoms`（`databaseUrlFor` 优先用它）；
+    - A 的 `pg_hba.conf` 放行 **B 机 IP**（`host all all <B_HOST>/32 scram-sha-256`）并 `reload`；
+    - `atoms` 角色要有 `CREATEDB`（每应用一个 schema 需要）：`alter role atoms createdb;`。
+    - 注意密码里可能有 `#`、`?` 等，`grep -oE` 截取会出错——用 Python `urllib.parse` 解析 `.env` 里的连接串。
 
 ## 验证与健康检查
 

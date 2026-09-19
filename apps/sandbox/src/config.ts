@@ -13,6 +13,10 @@ export const config = {
   idleTtlMs: Number(process.env.SANDBOX_IDLE_TTL_MS ?? 30 * 60 * 1000),
   /** 同时运行的沙箱上限（按内存计，2C4G 建议 4） */
   maxSandboxes: Number(process.env.SANDBOX_MAX ?? 4),
+  /** 同时运行的【已发布应用】上限（常驻后端容器） */
+  maxReleases: Number(process.env.SANDBOX_MAX_RELEASES ?? 5),
+  /** 已发布应用后端在容器内监听的端口 */
+  releasePort: Number(process.env.SANDBOX_RELEASE_PORT ?? 3001),
 };
 
 export const SKIP_DIRS = new Set([
