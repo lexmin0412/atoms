@@ -8,7 +8,8 @@
     "start": "tsx src/index.ts",
     "db:init": "tsx src/scripts/init-db.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "credits": "tsx src/scripts/credits-cli.ts"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.53",

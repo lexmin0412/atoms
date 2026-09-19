@@ -18,19 +18,6 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export interface UsageWindow {
-  status: string;
-  percent: number;
-  resetsAt: string;
-}
-export interface UsageResponse {
-  usage?: {
-    rolling?: UsageWindow;
-    weekly?: UsageWindow;
-    monthly?: UsageWindow;
-  };
-}
-
 export interface TreeNode {
   id: string;
   pid: string | null;
@@ -38,6 +25,23 @@ export interface TreeNode {
   type: 'file' | 'dir';
   path: string;
   version: number;
+}
+
+export interface CreditSummary {
+  balance: number;
+  spent: number;
+  monthlyGrant: number;
+  period: string;
+}
+
+export interface LedgerEntry {
+  id: string;
+  delta: string;
+  balance_after: string;
+  reason: 'grant' | 'usage' | 'adjust';
+  project_id: string | null;
+  meta: Record<string, unknown>;
+  created_at: string;
 }
 
 export const api = {
@@ -104,7 +108,11 @@ export const api = {
     req<{ ok: boolean }>(`/api/projects/${id}/fs/node/${nodeId}`, { method: 'DELETE' }),
   rebuild: (id: string) =>
     req<{ ok: boolean; log?: string }>(`/api/projects/${id}/rebuild`, { method: 'POST' }),
-  usage: () => req<UsageResponse>('/api/usage'),
+  credits: () => req<CreditSummary>('/api/credits'),
+  creditsLedger: (page: number, projectId?: string) =>
+    req<{ rows: LedgerEntry[]; total: number; page: number; pageSize: number }>(
+      `/api/credits/ledger?page=${page}${projectId ? `&projectId=${projectId}` : ''}`,
+    ),
   previewVersion: (id: string) =>
     req<{ version: string }>(`/api/projects/${id}/preview-version`),
   previewUrl: (id: string) => req<{ url: string }>(`/api/projects/${id}/preview-url`),

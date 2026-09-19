@@ -42,6 +42,7 @@ ssh -o BatchMode=yes <A_HOST> 'export PATH="$HOME/.local/share/fnm/node-versions
 ```
 > `vite` 产物**必须 cp 到 `/var/www/atoms`**，否则线上不更新。
 
+
 ### 改沙箱服务（apps/sandbox）
 ```bash
 rsync -az -e "ssh -i $HOME/.ssh/<SSH_KEY>" apps/sandbox/src/ ubuntu@<B_HOST>:~/atoms-sandbox/src/
@@ -92,6 +93,9 @@ ssh ... ubuntu@<B_HOST> 'cd ~/atoms-sandbox && docker build -t atoms-sandbox:lat
 18. **dev app 是独立容器**（`atoms-devapp-<id>`，挂载同一开发工作区）。它**不受开发沙箱回收器管辖**——回收/销毁开发沙箱时必须一并 `stopDevApp(id)`（`lifecycle.ts` 的 `reap` 与 `DELETE /sandbox/:id` 已处理），否则容器泄漏、且 `rm -rf /srv/atoms/<id>` 会影响其挂载。
 19. **改迁移/表结构后 B 上旧的沙箱工作区仍是旧文件**：A 的 `open` 会先列出沙箱文件、删掉 DB 里不存在的再写入（自愈）。所以**同步失败不要吞掉**——A 会在缓存失效后下次全量重建。
 20. **`pnpm install` 在 A 上会提示 build scripts 被忽略**：正常（根 `.npmrc` 的 `dangerously-allow-all-builds=true` 已放行），只要目标依赖目录存在即可。
+21. **credits 环境变量只在服务端 `.env`**：`CREDITS_MONTHLY_GRANT`（默认 500）。**改 schema/加表后必须先 rsync 再 `db:init`**，否则迁移文件不在 A 上。
+22. **没有公网管理入口**：手动调额/查系统额度用 A 机本地 CLI —— `pnpm --filter @atoms/api credits grant|list|usage`。
+23. **定价依赖 models.dev**：拉不到会回退内置兜底费率（日志里会 warn `[credits] 拉取 models.dev 失败`），不阻塞聊天。`.cache/` 已 gitignore。
 
 ## 验证与健康检查
 

@@ -10,6 +10,7 @@ import {
   clearSessionCookie,
   currentUser,
 } from '../auth';
+import { ensureGrant } from '../credits';
 import { query } from '../db';
 
 export type Env = { Variables: { user: SessionUser } };
@@ -43,6 +44,10 @@ authRoutes.post('/register', async (c) => {
     [email, username, hashPassword(password)],
   );
   const user = r.rows[0];
+  // 新用户：开通 credits 账户并发放首期额度（失败不影响注册）
+  await ensureGrant(user.id).catch((err) =>
+    console.error('[auth] 初始化 credits 失败:', err),
+  );
   const token = await createSession(user.id);
   setSessionCookie(c, token);
   return c.json({ user });

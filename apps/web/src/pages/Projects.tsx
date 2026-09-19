@@ -2,7 +2,7 @@ import type { ProjectDto, UserDto } from '@atoms/shared';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import QuotaBadge from '../components/QuotaBadge';
+import CreditsBadge from '../components/CreditsBadge';
 import { api } from '../lib/api';
 
 export default function Projects({
@@ -82,7 +82,7 @@ export default function Projects({
           <p className="text-sm text-neutral-500">{user.username}</p>
         </div>
         <div className="flex items-center gap-4">
-          <QuotaBadge />
+          <CreditsBadge />
           <button
             onClick={logout}
             className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"

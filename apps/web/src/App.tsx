@@ -4,6 +4,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 
 import { api } from './lib/api';
 import Chat from './pages/Chat';
+import Credits from './pages/Credits';
 import Login from './pages/Login';
 import Projects from './pages/Projects';
 
@@ -40,6 +41,10 @@ export default function App() {
         }
       />
       <Route path="/p/:id" element={user ? <Chat /> : <Navigate to="/login" replace />} />
+      <Route
+        path="/credits"
+        element={user ? <Credits /> : <Navigate to="/login" replace />}
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

@@ -27,8 +27,8 @@ export const config = {
     url: process.env.SANDBOX_URL ?? 'http://127.0.0.1:4000',
     secret: process.env.SANDBOX_SHARED_SECRET ?? '',
   },
-  /** 每用户 24 小时内最多可发送的消息数（防滥用） */
-  dailyMessageLimit: Number(process.env.DAILY_MESSAGE_LIMIT ?? 50),
+  /** credits：每自然月补满到该额度（1 积分 = $0.01） */
+  creditsMonthlyGrant: Number(process.env.CREDITS_MONTHLY_GRANT ?? 500),
   /** 已发布应用后端在容器内监听的端口（与沙箱侧约定一致） */
   releasePort: Number(process.env.RELEASE_PORT ?? 3001),
   /** 前端产物托管（COS）；未配置则回退本地目录 */

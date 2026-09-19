@@ -3,6 +3,7 @@ import { DefaultChatTransport } from 'ai';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
+import CreditsBadge from '../components/CreditsBadge';
 import DatabaseView from '../components/DatabaseView';
 import Reasoning from '../components/Reasoning';
 import { api } from '../lib/api';
@@ -157,6 +158,30 @@ function renderPart(part: Part, i: number, animating: boolean) {
   return null;
 }
 
+function creditsOf(parts: Part[]): {
+  credits: number;
+  budgetExceeded: boolean;
+} | null {
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const p = parts[i];
+    if (p.type === 'data-credits' && p.data) {
+      return p.data as { credits: number; budgetExceeded: boolean };
+    }
+  }
+  return null;
+}
+
+function MessageCost({ parts }: { parts: Part[] }) {
+  const c = creditsOf(parts);
+  if (!c) return null;
+  return (
+    <div className="mt-1 text-xs text-neutral-400">
+      本次消耗 {c.credits.toFixed(2)} 积分
+      {c.budgetExceeded && <span className="ml-2 text-amber-500">额度用尽，已中断</span>}
+    </div>
+  );
+}
+
 function TerminalBlock({ cmd, text }: { cmd: string; text: string }) {
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950 text-xs">
@@ -202,6 +227,7 @@ export default function Chat() {
   const { id } = useParams<{ id: string }>();
   const [input, setInput] = useState('');
   const [fileVersion, setFileVersion] = useState(0);
+  const [creditsRefresh, setCreditsRefresh] = useState(0);
   const [tab, setTab] = useState<'preview' | 'files' | 'database'>('preview');
   const [previewVersion, setPreviewVersion] = useState(0);
   const [previewSrc, setPreviewSrc] = useState('');
@@ -370,6 +396,7 @@ export default function Chat() {
   useEffect(() => {
     if (status === 'ready') {
       setFileVersion((v) => v + 1);
+      setCreditsRefresh((v) => v + 1);
       setPreviewVersion((v) => v + 1);
       if (id) {
         // 预览用独立子域；若有后端则启动开发应用（/api 才通）
@@ -572,12 +599,15 @@ export default function Chat() {
             ← 返回
           </Link>
           <h1 className="text-sm font-medium">对话</h1>
-          <button
-            onClick={() => setShowPanel((v) => !v)}
-            className="ml-auto rounded border border-neutral-300 px-2 py-1 text-xs lg:hidden dark:border-neutral-700"
-          >
-            {showPanel ? '收起' : '预览/文件'}
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <CreditsBadge refreshKey={creditsRefresh} />
+            <button
+              onClick={() => setShowPanel((v) => !v)}
+              className="rounded border border-neutral-300 px-2 py-1 text-xs lg:hidden dark:border-neutral-700"
+            >
+              {showPanel ? '收起' : '预览/文件'}
+            </button>
+          </div>
         </header>
 
         <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
@@ -610,6 +640,7 @@ export default function Chat() {
                 }
               >
                 {renderParts(m.parts as Part[], animating)}
+                {m.role === 'assistant' && <MessageCost parts={m.parts as Part[]} />}
               </div>
             );
           })}

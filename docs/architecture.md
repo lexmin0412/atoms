@@ -131,6 +131,9 @@ projects     (id, user_id, title, status, created_at, updated_at)
 files        -- 见下方「文件树」
 messages     (id, project_id, seq, role, parts jsonb, created_at)
 app_releases (project_id, status, frontend_target, container_ip, container_port, db_schema, error, updated_at)
+credit_accounts (user_id, balance numeric(14,4), granted_period)      -- 积分账户
+credit_ledger   (id, user_id, delta, balance_after, reason, project_id, ref, meta, created_at)
+-- messages 增加 credits numeric(14,4)  -- 该条 assistant 消息消耗
 ```
 **纪律**：平台库只存平台数据与**源码**，绝不存 `node_modules` / `dist` / `.git`。
 
@@ -146,6 +149,22 @@ files (id, project_id, pid, name, type['file'|'dir'], path, content, version, up
 - **冗余 `path`**：与 Agent 工具、沙箱真实文件系统的「路径」接口衔接；树形 UI 与递归操作（重命名/删除目录）用 `pid`。
 - **`version`**：手动编辑的乐观锁；保存时版本不符返回 409（生成中禁止编辑，双重兜底）。
 - **与沙箱的一致性**：DB 是唯一事实源。手动编辑 → 落库后增量同步沙箱；同步失败则丢弃工作区缓存，下次从 DB 全量重建（`open` 会先清掉沙箱里多出的文件）。
+
+### Credits（按用户计量与限制，迭代 005）
+
+- **口径**：按 token。取 `streamText` 的 `result.usage`（v7 中即多步**累计**之和；`totalUsage` 是废弃别名），在流结束后结算。
+- **计价**：锚定 USD，费率从 [models.dev](https://models.dev/api.json) 拉取（`opencode-go/<DEFAULT_MODEL>` 的 `cost.input/output/cache_read/cache_write`，USD / 1M tokens）。
+  **1 积分 = $0.01（100 积分 = $1）**；`credits = (in·r_in + out·r_out + cacheRead·r_cr + cacheWrite·r_cw)/1e6 / 0.01`。
+  费率有内存 + 磁盘缓存（TTL 24h），拉取失败回退内置兜底费率，**不阻塞聊天**。
+- **发放**：自然月补满到 `CREDITS_MONTHLY_GRANT`（默认 500），以 `granted_period` 保证幂等。
+- **限制**：发起前余额 ≤ 0 → **402 `insufficient_credits`**；生成中通过 `stopWhen` 附加条件累计用量，达到起始余额即**优雅停止循环**（不硬杀），并随 `data-credits` part 告知前端「额度用尽，已中断」。
+- **结算**：按实际用量扣减（允许扣成负），写 `usage` 流水 + 回写 `messages.credits`；`onEnd`/`onError` 用一次性 promise 防重复扣。
+- **并发**：账户行 `select ... for update`，避免并发把余额扣穿。
+- **精度**：内部 `numeric(14,4)`，展示 2 位。
+- **展示**：顶栏 `CreditsBadge`（余额 / 月额度）、assistant 消息尾部「本次消耗 X.XX 积分」、`/credits` 明细页（余额 + 流水 + 按项目筛选 + 分页）。
+- **与上游共享额度的关系**：上游（OpenCode Go）的 5h/周/月 配额是**硬天花板**，credits 是它之上的**按用户公平层**，二者叠加。
+- **运维**：不提供公网管理入口。手动调额与系统额度查看走 A 机本地 CLI：
+  `pnpm --filter @atoms/api credits grant --email <email> --amount <n> --note <备注>`、`credits list --email <email>`、`credits usage`。
 
 ### 数据库迁移（强约束）
 **任何 schema 变更都必须带迁移，且能处理线上已有数据。**
@@ -186,7 +205,8 @@ GET    /api/projects/:id/preview-version        产物版本（前端轮询刷�
 POST   /api/projects/:id/publish                发布 → 独立应用
 GET    /api/projects/:id/deployment             发布状态（前端轮询到 running）
 POST   /api/projects/:id/unpublish              下架
-GET    /api/usage                    系统额度（上游 /v1/usage）
+GET    /api/credits                  余额 + 本周期用量（顺带触发周期发放）
+GET    /api/credits/ledger           消耗明细（分页，可按项目筛选）
 ```
 - `/chat` 走 SSE；nginx 必须关 buffering。
 - 额度：每用户 24h 消息上限 + 输入长度上限。
@@ -199,7 +219,8 @@ GET    /api/usage                    系统额度（上游 /v1/usage）
   <Projects/>                项目列表（重命名/删除）
   <Chat/>                    工作台
     ├─ 对话区：Markdown(Streamdown，懒加载) / Reasoning(可折叠) / ToolCard / TerminalBlock
-    └─ 右侧：预览(iframe) / 文件管理器 / 数据库查看 / 发布分享 / 系统额度
+    └─ 右侧：预览(iframe) / 文件管理器 / 数据库查看 / 发布分享
+  <Credits/>                 积分明细页（余额 + 流水 + 按项目筛选）
 ```
 
 **文件管理器（迭代 004）**
