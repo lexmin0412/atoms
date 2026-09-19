@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { query } from '../db';
+
 import type { SessionUser } from '../auth';
 import {
   hashPassword,
@@ -10,6 +10,7 @@ import {
   clearSessionCookie,
   currentUser,
 } from '../auth';
+import { query } from '../db';
 
 export type Env = { Variables: { user: SessionUser } };
 

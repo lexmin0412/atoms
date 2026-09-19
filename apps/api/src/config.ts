@@ -1,14 +1,14 @@
-import { config as loadEnv } from 'dotenv';
-import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { config as loadEnv } from 'dotenv';
 
 const here = dirname(fileURLToPath(import.meta.url));
 // apps/api/src -> ../../../ = 仓库根
 loadEnv({ path: resolve(here, '../../../.env') });
 
 export const config = {
-  databaseUrl:
-    process.env.DATABASE_URL ?? 'postgres://huangmin@127.0.0.1:5432/atoms',
+  databaseUrl: process.env.DATABASE_URL ?? 'postgres://huangmin@127.0.0.1:5432/atoms',
   apiPort: Number(process.env.API_PORT ?? 8787),
   sessionSecret: process.env.SESSION_SECRET ?? 'dev-secret',
   llm: {

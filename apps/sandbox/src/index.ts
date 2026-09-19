@@ -1,7 +1,9 @@
-import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
-import { config } from './config';
+import { Hono } from 'hono';
+
 import { hmacAuth, type SandboxEnv } from './auth';
+import { config } from './config';
+import { touch, forget, startReaper } from './lifecycle';
 import {
   ensureSandbox,
   destroySandbox,
@@ -16,7 +18,6 @@ import {
   snapshotDist,
   listRunningSandboxIds,
 } from './workspace';
-import { touch, forget, startReaper } from './lifecycle';
 
 const app = new Hono<SandboxEnv>();
 

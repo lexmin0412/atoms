@@ -1,8 +1,15 @@
 import { createHmac, createHash } from 'node:crypto';
+
 import { config } from '../config';
 
 /** 与 B 机沙箱服务约定的签名：HMAC(secret, `${ts}\n${method}\n${pathWithQuery}\n${sha256(body)}`) */
-export function signature(secret: string, ts: string, method: string, pathWithQuery: string, body: string) {
+export function signature(
+  secret: string,
+  ts: string,
+  method: string,
+  pathWithQuery: string,
+  body: string,
+) {
   const bodyHash = createHash('sha256').update(body).digest('hex');
   return createHmac('sha256', secret)
     .update(`${ts}\n${method}\n${pathWithQuery}\n${bodyHash}`)

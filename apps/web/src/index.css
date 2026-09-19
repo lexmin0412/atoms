@@ -1,5 +1,10 @@
 @import 'tailwindcss';
 
+/* 让 Tailwind 扫描 Streamdown 及其插件的类名（路径相对本 CSS 文件） */
+@source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/cjk/dist/*.js";
+
 :root {
   color-scheme: light dark;
 }
@@ -13,6 +18,14 @@ body,
 body {
   margin: 0;
   font-family:
-    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
 }

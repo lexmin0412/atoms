@@ -1,6 +1,6 @@
+import type { Runtime, Workspace } from '@atoms/shared';
 import { tool } from 'ai';
 import { z } from 'zod';
-import type { Runtime, Workspace } from '@atoms/shared';
 
 const MAX_CMD_OUTPUT = 8000;
 
@@ -9,7 +9,8 @@ export type Emit = (part: unknown) => void;
 export function createTools(runtime: Runtime, ws: Workspace, emit?: Emit) {
   return {
     list_files: tool({
-      description: '列出项目内所有文件路径（相对项目根目录，已忽略 node_modules/dist 等）。',
+      description:
+        '列出项目内所有文件路径（相对项目根目录，已忽略 node_modules/dist 等）。',
       inputSchema: z.object({}),
       execute: async () => ({ files: await runtime.listFiles(ws) }),
     }),

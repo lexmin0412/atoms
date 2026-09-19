@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { pool } from '../db';
 
 const here = dirname(fileURLToPath(import.meta.url));

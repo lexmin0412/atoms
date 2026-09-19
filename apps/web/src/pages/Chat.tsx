@@ -1,8 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+
+import Reasoning from '../components/Reasoning';
 import { api } from '../lib/api';
+
+// 懒加载：Streamdown + Shiki 体积较大，推迟到首条消息渲染时再加载
+const Markdown = lazy(() => import('../components/Markdown'));
+
+const EXAMPLES = ['做一个番茄钟', '一个待办清单', '一个极简记账本', '一个数据看板'];
+
+function friendlyError(msg: string): string {
+  if (/busy|429|当前运行中的应用较多|额度|上限/.test(msg)) {
+    return '当前使用人数较多或已达额度上限，请稍后再试。';
+  }
+  if (/error|failed|fetch|network|stream|timeout/i.test(msg)) {
+    return '模型服务暂时不可用，请重试。';
+  }
+  return msg;
+}
 
 type Part = {
   type: string;
@@ -80,17 +97,21 @@ function ToolCard({ name, part }: { name: string; part: Part }) {
   );
 }
 
-function renderPart(part: Part, i: number) {
+function renderPart(part: Part, i: number, animating: boolean) {
   if (part.type === 'text' && part.text) {
     return (
-      <p key={i} className="whitespace-pre-wrap">
-        {part.text}
-      </p>
+      <Suspense key={i} fallback={<div className="whitespace-pre-wrap">{part.text}</div>}>
+        <Markdown text={part.text} animating={animating} />
+      </Suspense>
     );
+  }
+  if (part.type === 'reasoning' && part.text) {
+    return <Reasoning key={i} text={part.text} streaming={animating} />;
   }
   const isTool = part.type === 'dynamic-tool' || part.type.startsWith('tool-');
   if (isTool) {
-    const name = part.type === 'dynamic-tool' ? (part.toolName ?? 'tool') : part.type.slice(5);
+    const name =
+      part.type === 'dynamic-tool' ? (part.toolName ?? 'tool') : part.type.slice(5);
     return <ToolCard key={i} name={name} part={part} />;
   }
   return null;
@@ -109,13 +130,15 @@ function TerminalBlock({ cmd, text }: { cmd: string; text: string }) {
   );
 }
 
-function renderParts(parts: Part[]) {
+function renderParts(parts: Part[], animating: boolean) {
   const nodes: React.ReactNode[] = [];
   let cmd = '';
   let buf: string[] = [];
   const flush = () => {
     if (buf.length) {
-      nodes.push(<TerminalBlock key={`t${nodes.length}`} cmd={cmd} text={buf.join('')} />);
+      nodes.push(
+        <TerminalBlock key={`t${nodes.length}`} cmd={cmd} text={buf.join('')} />,
+      );
       buf = [];
       cmd = '';
     }
@@ -128,7 +151,7 @@ function renderParts(parts: Part[]) {
       return;
     }
     flush();
-    const n = renderPart(part, i);
+    const n = renderPart(part, i, animating);
     if (n) nodes.push(n);
   });
   flush();
@@ -152,7 +175,9 @@ export default function Chat() {
     () => new DefaultChatTransport({ api: `/api/projects/${id}/chat` }),
     [id],
   );
-  const { messages, sendMessage, status, error, setMessages } = useChat({ transport });
+  const { messages, sendMessage, status, error, setMessages, stop, regenerate } = useChat(
+    { transport },
+  );
 
   const busy = status === 'submitted' || status === 'streaming';
 
@@ -264,24 +289,61 @@ export default function Chat() {
 
         <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
           {messages.length === 0 && (
-            <p className="text-sm text-neutral-500">
-              描述你想创建的应用，例如「做一个番茄钟」。
-            </p>
-          )}
-          {messages.map((m) => (
-            <div
-              key={m.id}
-              className={
-                m.role === 'user'
-                  ? 'ml-auto max-w-[85%] rounded-2xl bg-neutral-900 px-4 py-2 text-sm text-white dark:bg-white dark:text-neutral-900'
-                  : 'max-w-[92%] text-sm'
-              }
-            >
-              {renderParts(m.parts as Part[])}
+            <div className="text-sm text-neutral-500">
+              <p className="mb-3">描述你想创建的应用，或从下面选一个开始：</p>
+              <div className="flex flex-wrap gap-2">
+                {EXAMPLES.map((ex) => (
+                  <button
+                    key={ex}
+                    onClick={() => sendMessage({ text: `帮我${ex}` })}
+                    className="rounded-full border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                  >
+                    {ex}
+                  </button>
+                ))}
+              </div>
             </div>
-          ))}
-          {busy && <p className="text-xs text-neutral-400">生成中…</p>}
-          {error && <p className="text-sm text-red-500">{error.message}</p>}
+          )}
+          {messages.map((m, idx) => {
+            const animating =
+              busy && idx === messages.length - 1 && m.role === 'assistant';
+            return (
+              <div
+                key={m.id}
+                className={
+                  m.role === 'user'
+                    ? 'ml-auto max-w-[85%] rounded-2xl bg-neutral-900 px-4 py-2 text-sm whitespace-pre-wrap text-white dark:bg-white dark:text-neutral-900'
+                    : 'max-w-[92%] text-sm'
+                }
+              >
+                {renderParts(m.parts as Part[], animating)}
+              </div>
+            );
+          })}
+          {busy && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">生成中…</span>
+              <button
+                onClick={() => stop()}
+                className="rounded border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+              >
+                停止
+              </button>
+            </div>
+          )}
+          {error && (
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-red-500">{friendlyError(error.message)}</span>
+              {messages.length > 0 && (
+                <button
+                  onClick={() => regenerate()}
+                  className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
+                >
+                  重试
+                </button>
+              )}
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
 
@@ -309,7 +371,7 @@ export default function Chat() {
         className={
           'shrink-0 flex-col border-neutral-200 dark:border-neutral-800 ' +
           (showPanel
-            ? 'fixed inset-0 z-30 flex w-full bg-white dark:bg-neutral-950 md:static md:z-auto md:w-[440px] md:border-l'
+            ? 'fixed inset-0 z-30 flex w-full bg-white md:static md:z-auto md:w-[440px] md:border-l dark:bg-neutral-950'
             : 'hidden md:flex md:w-[440px] md:border-l')
         }
       >
@@ -387,9 +449,7 @@ export default function Chat() {
         ) : (
           <div className="flex min-h-0 flex-1">
             <div className="w-44 shrink-0 overflow-y-auto border-r border-neutral-200 py-2 text-xs dark:border-neutral-800">
-              {files.length === 0 && (
-                <p className="px-3 text-neutral-400">暂无文件</p>
-              )}
+              {files.length === 0 && <p className="px-3 text-neutral-400">暂无文件</p>}
               {files.map((f) => (
                 <button
                   key={f}

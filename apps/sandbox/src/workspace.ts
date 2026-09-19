@@ -1,14 +1,8 @@
 import { spawn, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import {
-  mkdir,
-  readFile,
-  writeFile,
-  readdir,
-  rm,
-  stat,
-} from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, rm, stat } from 'node:fs/promises';
 import { join, resolve, relative, dirname, extname } from 'node:path';
+import { promisify } from 'node:util';
+
 import { config, SKIP_DIRS } from './config';
 
 const execFileAsync = promisify(execFile);
@@ -38,12 +32,7 @@ async function containerExists(id: string) {
 
 async function isRunning(id: string) {
   try {
-    const s = await docker([
-      'inspect',
-      '-f',
-      '{{.State.Running}}',
-      containerName(id),
-    ]);
+    const s = await docker(['inspect', '-f', '{{.State.Running}}', containerName(id)]);
     return s.trim() === 'true';
   } catch {
     return false;
@@ -100,13 +89,7 @@ export async function destroySandbox(id: string) {
 /** 当前运行中的沙箱 id 列表 */
 export async function listRunningSandboxIds(): Promise<string[]> {
   try {
-    const out = await docker([
-      'ps',
-      '--filter',
-      'name=atoms-',
-      '--format',
-      '{{.Names}}',
-    ]);
+    const out = await docker(['ps', '--filter', 'name=atoms-', '--format', '{{.Names}}']);
     return out
       .split('\n')
       .map((s) => s.trim())
@@ -122,11 +105,9 @@ export async function isSandboxRunning(id: string) {
 }
 
 export function execStream(id: string, cmd: string): ReadableStream<Uint8Array> {
-  const child = spawn(
-    'docker',
-    ['exec', containerName(id), 'sh', '-lc', cmd],
-    { stdio: ['ignore', 'pipe', 'pipe'] },
-  );
+  const child = spawn('docker', ['exec', containerName(id), 'sh', '-lc', cmd], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   const enc = new TextEncoder();
   return new ReadableStream<Uint8Array>({
     start(controller) {

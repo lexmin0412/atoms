@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+
 import { query } from '../db';
 
 export const shareRoutes = new Hono();
@@ -22,9 +23,11 @@ const MIME: Record<string, string> = {
   '.map': 'application/json; charset=utf-8',
 };
 
-function mimeOf(p: string) {
+export function mimeOf(p: string) {
   const i = p.lastIndexOf('.');
-  return i >= 0 ? (MIME[p.slice(i).toLowerCase()] ?? 'application/octet-stream') : 'text/html; charset=utf-8';
+  return i >= 0
+    ? (MIME[p.slice(i).toLowerCase()] ?? 'application/octet-stream')
+    : 'text/html; charset=utf-8';
 }
 
 async function getFile(token: string, path: string) {

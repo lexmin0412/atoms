@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+
 import { api } from '../lib/api';
 
 interface Display {
@@ -20,7 +21,7 @@ function Bar({ label, value }: { label: string; value?: number }) {
           style={{ width: `${Math.min(100, value)}%` }}
         />
       </div>
-      <span className="w-8 text-[11px] tabular-nums text-neutral-500">{value}%</span>
+      <span className="w-8 text-[11px] text-neutral-500 tabular-nums">{value}%</span>
     </div>
   );
 }

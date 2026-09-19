@@ -12,10 +12,13 @@
   "dependencies": {
     "@ai-sdk/react": "^4.0.110",
     "@atoms/shared": "workspace:^",
+    "@streamdown/cjk": "^1.0.3",
+    "@streamdown/code": "^1.1.1",
     "ai": "^7.0.107",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "react-router-dom": "^7.18.4"
+    "react-router-dom": "^7.18.4",
+    "streamdown": "^2.6.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

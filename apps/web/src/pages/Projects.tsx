@@ -1,8 +1,9 @@
+import type { ProjectDto, UserDto } from '@atoms/shared';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { ProjectDto, UserDto } from '@atoms/shared';
-import { api } from '../lib/api';
+
 import QuotaBadge from '../components/QuotaBadge';
+import { api } from '../lib/api';
 
 export default function Projects({
   user,
@@ -28,7 +29,18 @@ export default function Projects({
   }
 
   useEffect(() => {
-    refresh();
+    let alive = true;
+    api
+      .listProjects()
+      .then((r) => {
+        if (alive) setProjects(r.projects);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   async function create(e: React.FormEvent) {

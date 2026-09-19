@@ -1,4 +1,3 @@
-import { Hono } from 'hono';
 import {
   streamText,
   convertToModelMessages,
@@ -7,13 +6,15 @@ import {
   createUIMessageStreamResponse,
   type UIMessage,
 } from 'ai';
-import { query } from '../db';
-import { config } from '../config';
-import { requireUser } from '../auth';
+import { Hono } from 'hono';
+
 import { model, SYSTEM_PROMPT } from '../agent';
-import { createTools } from '../tools';
+import { requireUser } from '../auth';
+import { config } from '../config';
+import { query } from '../db';
 import { getRuntime } from '../runtime';
 import { acquireWorkspace, snapshotProject } from '../runtime/manager';
+import { createTools } from '../tools';
 import type { Env } from './auth';
 
 export const chatRoutes = new Hono<Env>();
@@ -70,14 +71,14 @@ chatRoutes.post('/:id/chat', async (c) => {
 
   // 输入长度上限（防滥用）
   const lastUserText = (lastUser?.parts ?? [])
-    .filter((p): p is { type: 'text'; text: string } => (p as { type?: string }).type === 'text')
+    .filter(
+      (p): p is { type: 'text'; text: string } =>
+        (p as { type?: string }).type === 'text',
+    )
     .map((p) => p.text ?? '')
     .join('');
   if (lastUserText.length > 4000) {
-    return c.json(
-      { error: 'too_long', message: '输入过长（上限 4000 字）' },
-      413,
-    );
+    return c.json({ error: 'too_long', message: '输入过长（上限 4000 字）' }, 413);
   }
 
   // 取（或创建）该项目的沙箱工作区
@@ -87,10 +88,7 @@ chatRoutes.post('/:id/chat', async (c) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : '';
     if (msg.includes('429') || msg.includes('busy')) {
-      return c.json(
-        { error: 'busy', message: '当前运行中的应用较多，请稍后再试' },
-        503,
-      );
+      return c.json({ error: 'busy', message: '当前运行中的应用较多，请稍后再试' }, 503);
     }
     throw err;
   }
@@ -98,9 +96,7 @@ chatRoutes.post('/:id/chat', async (c) => {
   const stream = createUIMessageStream({
     originalMessages: uiMessages,
     execute: async ({ writer }) => {
-      const tools = createTools(getRuntime(), ws, (part) =>
-        writer.write(part as never),
-      );
+      const tools = createTools(getRuntime(), ws, (part) => writer.write(part as never));
       const result = streamText({
         model,
         system: SYSTEM_PROMPT,
@@ -130,13 +126,21 @@ chatRoutes.post('/:id/chat', async (c) => {
       } catch (err) {
         console.error('[chat] snapshot error:', err);
       }
-      await query('update projects set updated_at = now() where id = $1', [
-        projectId,
-      ]);
+      await query('update projects set updated_at = now() where id = $1', [projectId]);
     },
     onError: (err) => {
       console.error('[chat] stream error:', err);
-      return 'An error occurred.';
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/MissingSessionID|401|403/i.test(msg)) {
+        return '模型服务鉴权失败，请联系管理员。';
+      }
+      if (/rate|429|quota|额度/i.test(msg)) {
+        return '模型服务繁忙或额度不足，请稍后重试。';
+      }
+      if (/ECONNRESET|fetch failed|stream ended|timeout/i.test(msg)) {
+        return '与模型服务的连接中断，请重试。';
+      }
+      return '生成过程中出现错误，请重试。';
     },
   });
 

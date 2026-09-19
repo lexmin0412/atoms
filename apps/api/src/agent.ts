@@ -1,4 +1,5 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+
 import { config } from './config';
 
 const provider = createOpenAICompatible({

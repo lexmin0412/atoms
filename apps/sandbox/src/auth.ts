@@ -1,5 +1,7 @@
 import { createHmac, createHash, timingSafeEqual } from 'node:crypto';
+
 import type { Context, Next } from 'hono';
+
 import { config } from './config';
 
 const MAX_SKEW_MS = 60_000;

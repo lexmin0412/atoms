@@ -1,4 +1,6 @@
 import type { FileMap, Runtime, Workspace, ExecChunk } from '@atoms/shared';
+
+import { applyEdit } from './edit';
 import { signedFetch, signedJson } from './http';
 
 /**
@@ -38,12 +40,20 @@ export class SandboxRuntime implements Runtime {
     });
   }
 
-  async editFile(ws: Workspace, path: string, oldStr: string, newStr: string): Promise<void> {
+  async editFile(
+    ws: Workspace,
+    path: string,
+    oldStr: string,
+    newStr: string,
+  ): Promise<void> {
     const current = await this.readFile(ws, path);
-    if (!current.includes(oldStr)) {
-      throw new Error(`edit_file: old_string not found in ${path}`);
+    let next: string;
+    try {
+      next = applyEdit(current, oldStr, newStr);
+    } catch (err) {
+      throw new Error(`edit_file: ${(err as Error).message} in ${path}`);
     }
-    await this.writeFile(ws, path, current.replace(oldStr, newStr));
+    await this.writeFile(ws, path, next);
   }
 
   async listFiles(ws: Workspace): Promise<string[]> {
@@ -94,7 +104,7 @@ export class SandboxRuntime implements Runtime {
     return r.files;
   }
 
-  async previewUrl(ws: Workspace): Promise<string> {
+  async previewUrl(_ws: Workspace): Promise<string> {
     return '';
   }
 }

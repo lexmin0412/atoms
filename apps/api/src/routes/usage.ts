@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
-import { config } from '../config';
+
 import { requireUser } from '../auth';
+import { config } from '../config';
 import type { Env } from './auth';
 
 export const usageRoutes = new Hono<Env>();

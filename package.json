@@ -1,13 +1,22 @@
 {
   "name": "atoms",
-  "private": true,
   "version": "0.0.0",
-  "packageManager": "pnpm@10.8.1",
+  "private": true,
   "scripts": {
     "dev:api": "pnpm --filter @atoms/api dev",
     "dev:web": "pnpm --filter @atoms/web dev",
     "dev": "pnpm --parallel --filter @atoms/api --filter @atoms/web dev",
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck"
-  }
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.68.0",
+    "oxlint": "^1.83.0"
+  },
+  "packageManager": "pnpm@10.8.1"
 }
