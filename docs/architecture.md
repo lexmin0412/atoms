@@ -123,15 +123,30 @@ DELETE /sandbox/:id                销毁（含工作区）
 ## 6. 数据模型（A / Postgres）
 
 ```sql
+-- 平台库（atoms）
 users        (id, email, username, password_hash, created_at)
 sessions     (id, user_id, token, expires_at)
 projects     (id, user_id, title, status, created_at, updated_at)
 files        (project_id, path, content, updated_at)          -- 源码（SSOT）
 messages     (id, project_id, seq, role, parts jsonb, created_at)
-app_releases (project_id, status, frontend_target, container_ip, container_port, db_schema, error, updated_at)  -- 发布记录
+app_releases (project_id, status, frontend_target, container_ip, container_port, db_schema, error, updated_at)
 ```
-**纪律**：DB 只存**源码与文本产物**，绝不存 `node_modules` / `dist` / `.git`。
-**已发布应用数据**：每个应用一个独立 schema（`app_<短id>`），与应用源码库表隔离。
+**纪律**：平台库只存平台数据与**源码**，绝不存 `node_modules` / `dist` / `.git`。
+
+### 平台库 / 应用库分离
+用户项目的业务数据在**独立的应用库**（`atoms_apps`），与平台库物理隔离：
+
+| 库 | 内容 | 谁连 |
+|---|---|---|
+| 平台库（`atoms`） | users / sessions / projects / files / messages / app_releases | 平台连接池 |
+| 应用库（`atoms_apps`） | 各用户项目的业务 schema | 应用池（开发沙箱 / 发布容器）、只读池 |
+
+**schema 命名**：`p{projectId}_{dev|prod}`（完整 projectId → 零碰撞；长度 ~41，低于 63 字节上限）
+- `_dev`：开发沙箱（Agent 边写边跑，可随意折腾）
+- `_prod`：发布容器（数据受保护；发布时从空开始）
+- 数据库查看器分「开发 / 生产」，**仅当该 schema 有业务表时才显示入口**
+
+**只读角色** `atoms_ro`：仅能读应用库中的项目 schema（`p*_dev` / `p*_prod`），无法访问平台库。
 
 ## 7. 后端 API（A / Hono）
 
@@ -169,7 +184,11 @@ GET    /api/usage                    系统额度（上游 /v1/usage）
 ## 9. 预览与发布
 
 ### 预览（开发中）
-- `GET /api/projects/:id/preview/` 代理沙箱里 `apps/web/dist`，同源 iframe 展示；前端轮询 `preview-version`，产物变化即刷新。
+- 预览走**独立子域** `dev-<projectId>.atoms.lexmin.cn`：
+  - `/` → 经隧道 → B 沙箱服务 → 开发沙箱内的 `apps/web/dist`
+  - `/api/*` → 经隧道 → B 沙箱服务 → 开发沙箱内运行的应用后端（连 `p<id>_dev`）
+- 每轮生成结束后前端自动启动 dev app；`preview-version` 变化即刷新 iframe。
+- **必须独立子域**：若同源（平台域下路径），生成应用里的相对路径 `/api/*` 会落到平台自己的 API，而非项目后端。
 
 ### 发布（独立应用）
 点「发布」→ 得到一个**独立可访问、能真正使用**的线上应用：`https://<projectId>.atoms.lexmin.cn`。
@@ -189,7 +208,17 @@ GET    /api/usage                    系统额度（上游 /v1/usage）
 - `/` → 回源 COS
 - 同源 → 无 CORS
 
-**数据隔离**：每个应用一个 Postgres schema（`app_<短id>`），通过连接串 `search_path` 限定；发布容器用 `RELEASE_DATABASE_URL`（A 机公网地址，因容器在 B）连接。
+**数据隔离**：每个项目一个 schema（`p{projectId}_{dev|prod}`），在**独立应用库** `atoms_apps` 中；开发/生产分离，发布从空开始。发布容器用 `RELEASE_DATABASE_URL`（A 机公网，因容器在 B）连接应用库。
+
+### 三层隔离（开发 vs 线上）
+
+| 维度 | 开发 | 线上（发布） |
+|---|---|---|
+| 数据 | `p<id>_dev` schema | `p<id>_prod` schema |
+| 前端 | 工作区 `apps/web/dist`（经 `dev-<id>` 子域预览） | 发布时快照进 COS |
+| 后端代码 | 开发工作区 `/srv/atoms/<id>`（Agent 实时编辑） | **冻结副本** `/srv/atoms-releases/<id>` |
+
+发布时把开发工作区源码（排除 `node_modules`/`dist`/`.git`）**冻结成独立副本**，发布容器只挂载副本——因此 Agent 改动开发代码**不会影响线上**。重新发布 = 重新冻结；下架 = 清理副本。
 
 **生命周期**：重新发布（地址不变，重启容器取最新代码）｜下架（停容器、释放名额）｜常驻**上限 5**。
 

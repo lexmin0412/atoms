@@ -4,11 +4,11 @@ import { z } from 'zod';
 import { requireUser } from '../auth';
 import { config } from '../config';
 import { query } from '../db';
-import { ensureAppSchema, databaseUrlFor } from '../release/db';
+import { ensureAppSchema, ensureDevSchema, databaseUrlFor } from '../release/db';
 import { publishFrontend } from '../release/frontend';
 import { getSandboxRuntime } from '../runtime';
 import { signedFetch, signedJson } from '../runtime/http';
-import { destroyWorkspace } from '../runtime/manager';
+import { destroyWorkspace, acquireWorkspace } from '../runtime/manager';
 import type { Env } from './auth';
 
 export const projectRoutes = new Hono<Env>();
@@ -148,6 +148,57 @@ async function servePreview(c: Context<Env>) {
 
 projectRoutes.get('/:id/preview', servePreview);
 projectRoutes.get('/:id/preview/*', servePreview);
+
+/** 预览地址（独立子域，避免 /api 落到平台） */
+projectRoutes.get('/:id/preview-url', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  if (!id) return c.json({ error: 'id_required' }, 400);
+  const project = await ownedProject(id, user.id);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+  return c.json({ url: `https://dev-${id}.atoms.lexmin.cn/` });
+});
+
+/** 启动开发应用后端（供预览子域的 /api 使用）；纯前端项目可忽略 */
+projectRoutes.post('/:id/devapp', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  if (!id) return c.json({ error: 'id_required' }, 400);
+  const project = await ownedProject(id, user.id);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+
+  // 仅在项目含 apps/api 时启动
+  const listing = await signedJson<{ files: string[] }>(`/sandbox/${id}/files`, {
+    method: 'GET',
+  }).catch(() => ({ files: [] as string[] }));
+  const hasBackend = listing.files.some((f) => f.startsWith('apps/api/'));
+  if (!hasBackend) return c.json({ hasBackend: false, ready: true });
+
+  const schema = await ensureDevSchema(id);
+  // 先确保开发沙箱存在（可能已被空闲回收）
+  await acquireWorkspace(id).catch(() => {});
+  await getSandboxRuntime()
+    .startDevApp(id, databaseUrlFor(schema))
+    .catch(() => {});
+  // 容器内需 install + 启动，给一点时间后再探测
+  await new Promise((r) => setTimeout(r, 1500));
+  const st = await getSandboxRuntime()
+    .devAppStatus(id)
+    .catch(() => null);
+  return c.json({ hasBackend: true, ready: st?.ready ?? false });
+});
+
+projectRoutes.get('/:id/devapp/status', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  if (!id) return c.json({ error: 'id_required' }, 400);
+  const project = await ownedProject(id, user.id);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+  const st = await getSandboxRuntime()
+    .devAppStatus(id)
+    .catch(() => null);
+  return c.json({ ready: st?.ready ?? false });
+});
 projectRoutes.get('/:id/preview-version', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');

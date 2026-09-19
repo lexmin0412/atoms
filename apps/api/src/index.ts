@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { config } from './config';
 import { authRoutes } from './routes/auth';
 import { chatRoutes } from './routes/chat';
+import { dbRoutes } from './routes/db';
 import { projectRoutes } from './routes/projects';
 import { usageRoutes } from './routes/usage';
 
@@ -13,6 +14,7 @@ app.get('/api/health', (c) => c.json({ ok: true }));
 app.route('/api/auth', authRoutes);
 app.route('/api/projects', projectRoutes);
 app.route('/api/projects', chatRoutes);
+app.route('/api/projects', dbRoutes);
 app.route('/api/usage', usageRoutes);
 
 serve({ fetch: app.fetch, port: config.apiPort, hostname: '127.0.0.1' }, (info) => {

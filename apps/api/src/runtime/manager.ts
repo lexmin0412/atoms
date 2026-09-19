@@ -1,6 +1,7 @@
 import type { FileMap, Workspace } from '@atoms/shared';
 
 import { pool, query } from '../db';
+import { ensureDevSchema, databaseUrlFor } from '../release/db';
 import { getRuntime } from './index';
 
 interface Entry {
@@ -21,6 +22,12 @@ export async function loadProjectFiles(projectId: string): Promise<FileMap> {
   return map;
 }
 
+/** 开发沙箱连的是 dev_<短id>，与生产的 app_<短id> 隔离 */
+async function devDatabaseUrl(projectId: string): Promise<string> {
+  const schema = await ensureDevSchema(projectId);
+  return databaseUrlFor(schema);
+}
+
 export async function acquireWorkspace(projectId: string): Promise<Workspace> {
   const hit = cache.get(projectId);
   if (hit) {
@@ -28,7 +35,11 @@ export async function acquireWorkspace(projectId: string): Promise<Workspace> {
     return hit.ws;
   }
   const rt = getRuntime();
-  const ws = await rt.open(projectId, await loadProjectFiles(projectId));
+  const ws = await rt.open(
+    projectId,
+    await loadProjectFiles(projectId),
+    await devDatabaseUrl(projectId),
+  );
   cache.set(projectId, { ws, lastUsed: Date.now() });
   return ws;
 }
@@ -37,7 +48,13 @@ export async function acquireWorkspace(projectId: string): Promise<Workspace> {
 export async function snapshotProject(projectId: string): Promise<FileMap> {
   const rt = getRuntime();
   const hit = cache.get(projectId);
-  const ws = hit?.ws ?? (await rt.open(projectId, await loadProjectFiles(projectId)));
+  const ws =
+    hit?.ws ??
+    (await rt.open(
+      projectId,
+      await loadProjectFiles(projectId),
+      await devDatabaseUrl(projectId),
+    ));
   const files = await rt.snapshot(ws);
   await saveProjectFiles(projectId, files);
   return files;

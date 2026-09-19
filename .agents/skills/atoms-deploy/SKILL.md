@@ -77,10 +77,14 @@ ssh ... ubuntu@<B_HOST> 'cd ~/atoms-sandbox && docker build -t atoms-sandbox:lat
 11. **Let's Encrypt 单域名走 HTTP-01**，用 webroot `/var/www/atoms`：`certbot certonly --webroot -w /var/www/atoms -d atoms.lexmin.cn`。泛域名才需要 DNSPod API + DNS-01。
 12. **浏览器把发布页下载而不是渲染**：`curl -I`（HEAD/无 Accept-Encoding）看着是 `Content-Disposition: inline`，但浏览器带 `Accept-Encoding` 时 **COS 会返回 `Content-Disposition: attachment`**（并 `Content-Encoding: gzip`）。前门 nginx 必须 `proxy_hide_header Content-Disposition; add_header Content-Disposition "inline" always;`，并用 `proxy_set_header Accept-Encoding "";` 不让上游压缩。**排查技巧**：用 `curl -H 'Accept-Encoding: gzip, deflate, br'` 复现浏览器行为，别只看普通 `curl -I`。
 13. **发布容器跨机连库**：已发布应用的后端容器跑在 **B 机**，而 Postgres 在 **A 机**，容器里写 `127.0.0.1:9688` 会 `ECONNREFUSED`。必须：
-    - A 的 `.env` 设 `RELEASE_DATABASE_URL=postgres://atoms:***@<A公网>:9688/atoms`（`databaseUrlFor` 优先用它）；
+    - A 的 `.env` 设 `RELEASE_DATABASE_URL=postgres://atoms:***@<A公网>:9688/atoms_apps`（`databaseUrlFor` 优先用它）；
     - A 的 `pg_hba.conf` 放行 **B 机 IP**（`host all all <B_HOST>/32 scram-sha-256`）并 `reload`；
     - `atoms` 角色要有 `CREATEDB`（每应用一个 schema 需要）：`alter role atoms createdb;`。
     - 注意密码里可能有 `#`、`?` 等，`grep -oE` 截取会出错——用 Python `urllib.parse` 解析 `.env` 里的连接串。
+14. **开发/生产必须隔离三样**：数据（`p<id>_dev` / `p<id>_prod`，在独立应用库 `atoms_apps`）、前端（发布时 dist 快照进 COS）、**后端代码**（发布时把开发工作区**冻结成副本** `/srv/atoms-releases/<id>`，发布容器只挂该副本）。否则 Agent 改开发代码会影响线上（发布容器重启就会加载半成品）。
+15. **`/srv/atoms-releases` 目录需预先创建并 chown 给 ubuntu**，否则首次发布会 `EACCES: mkdir` 500。
+16. **B 容器内没有 `ps`/`pkill`**（精简镜像）：清理容器内进程要遍历 `/proc/[0-9]*/environ` 匹配环境变量再 `kill`。
+17. **只读角色对“后建的表”无权限**：建 schema 时的 `GRANT SELECT ON ALL TABLES` 只覆盖**当时已存在**的表；应用运行时新建的表没被授权 → 数据库查看报 `permission denied`（生产库尤其明显，因为发布时表还没建）。修复：查询前由 `atoms`（拥有者）**兜底补授权**（`ensureReadable`），或给 `atoms` 配 `ALTER DEFAULT PRIVILEGES ... GRANT SELECT`。
 
 ## 验证与健康检查
 

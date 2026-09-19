@@ -17,6 +17,8 @@ export const config = {
   maxReleases: Number(process.env.SANDBOX_MAX_RELEASES ?? 5),
   /** 已发布应用后端在容器内监听的端口 */
   releasePort: Number(process.env.SANDBOX_RELEASE_PORT ?? 3001),
+  /** 开发预览应用后端在容器内监听的端口 */
+  devAppPort: Number(process.env.SANDBOX_DEVAPP_PORT ?? 3002),
 };
 
 export const SKIP_DIRS = new Set([

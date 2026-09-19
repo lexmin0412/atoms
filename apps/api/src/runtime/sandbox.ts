@@ -8,11 +8,15 @@ import { signedFetch, signedJson } from './http';
  * 每个项目一个沙箱（sandboxId = projectId）。
  */
 export class SandboxRuntime implements Runtime {
-  async open(projectId: string, files: FileMap): Promise<Workspace> {
+  async open(
+    projectId: string,
+    files: FileMap,
+    databaseUrl?: string,
+  ): Promise<Workspace> {
     const id = projectId;
     await signedJson('/sandbox', {
       method: 'POST',
-      body: JSON.stringify({ sandboxId: id }),
+      body: JSON.stringify({ sandboxId: id, databaseUrl }),
     });
     const ws: Workspace = { id, projectId };
     for (const [path, content] of Object.entries(files)) {
@@ -126,5 +130,20 @@ export class SandboxRuntime implements Runtime {
 
   async stopRelease(projectId: string): Promise<void> {
     await signedJson(`/sandbox/${projectId}/release/stop`, { method: 'POST' });
+  }
+
+  // ---- 开发预览应用（dev-<id> 子域）----
+
+  async startDevApp(projectId: string, databaseUrl: string): Promise<void> {
+    await signedJson(`/sandbox/${projectId}/devapp`, {
+      method: 'POST',
+      body: JSON.stringify({ databaseUrl }),
+    });
+  }
+
+  async devAppStatus(
+    projectId: string,
+  ): Promise<{ running: boolean; ip: string; ready: boolean }> {
+    return signedJson(`/sandbox/${projectId}/devapp/status`, { method: 'GET' });
   }
 }

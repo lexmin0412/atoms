@@ -10,6 +10,9 @@ import {
   releaseStatus,
   releaseReady,
   listReleaseIds,
+  startDevApp,
+  devAppReady,
+  devAppTarget,
 } from './release';
 import {
   ensureSandbox,
@@ -49,7 +52,9 @@ function body<T>(c: { get: (k: 'rawBody') => string }): T {
 }
 
 app.post('/sandbox', async (c) => {
-  const { sandboxId } = body<{ sandboxId?: string }>(c);
+  const { sandboxId, databaseUrl } = body<{ sandboxId?: string; databaseUrl?: string }>(
+    c,
+  );
   if (!sandboxId) return c.json({ error: 'sandboxId_required' }, 400);
 
   // 并发闸门：超出上限则拒绝（避免 2C4G 被撑爆）
@@ -61,7 +66,7 @@ app.post('/sandbox', async (c) => {
     );
   }
 
-  await ensureSandbox(sandboxId);
+  await ensureSandbox(sandboxId, databaseUrl);
   touch(sandboxId);
   return c.json({ id: sandboxId, running: await isSandboxRunning(sandboxId) });
 });
@@ -194,6 +199,49 @@ async function appProxy(c: Context<SandboxEnv>) {
 
 app.all('/sandbox/:id/app', appProxy);
 app.all('/sandbox/:id/app/*', appProxy);
+
+// ---- 开发预览：在开发沙箱容器内跑应用后端，供 dev-<id> 子域反代 ----
+
+app.post('/sandbox/:id/devapp', async (c) => {
+  const id = c.req.param('id') ?? '';
+  // 该路径豁免 HMAC，rawBody 未设置，直接读 body
+  const parsed = (await c.req.json().catch(() => ({}))) as { databaseUrl?: string };
+  await startDevApp(id, parsed.databaseUrl ?? '');
+  return c.json({ status: 'starting' });
+});
+
+app.get('/sandbox/:id/devapp/status', async (c) => {
+  return c.json(await devAppReady(c.req.param('id') ?? ''));
+});
+
+async function devAppProxy(c: Context<SandboxEnv>) {
+  const id = c.req.param('id') ?? '';
+  const target = await devAppTarget(id);
+  if (!target) return c.json({ error: 'not_running' }, 503);
+
+  const url = new URL(c.req.url);
+  const prefix = `/sandbox/${id}/devapp/`;
+  const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : '';
+  const full = `${target}/${rest}${url.search}`;
+
+  const headers = new Headers(c.req.raw.headers);
+  headers.delete('host');
+  headers.delete('x-atoms-ts');
+  headers.delete('x-atoms-sig');
+  const init: RequestInit = { method: c.req.method, headers };
+  if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+    init.body = await c.req.arrayBuffer();
+  }
+  const res = await fetch(full, init);
+  const out = new Headers(res.headers);
+  out.delete('content-encoding');
+  out.delete('content-length');
+  out.delete('transfer-encoding');
+  return new Response(res.body, { status: res.status, headers: out });
+}
+
+app.all('/sandbox/:id/devapp', devAppProxy);
+app.all('/sandbox/:id/devapp/*', devAppProxy);
 
 startReaper().catch((err) => console.error('[reaper] start failed:', err));
 

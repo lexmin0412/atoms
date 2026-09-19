@@ -39,7 +39,7 @@ async function isRunning(id: string) {
   }
 }
 
-export async function ensureSandbox(id: string) {
+export async function ensureSandbox(id: string, databaseUrl?: string) {
   await mkdir(wsDir(id), { recursive: true });
   const store = join(config.root, '.pnpm-store');
   await mkdir(store, { recursive: true });
@@ -48,6 +48,7 @@ export async function ensureSandbox(id: string) {
     await docker(['rm', '-f', containerName(id)]).catch(() => {});
   }
   const uid = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`;
+  const envArgs = databaseUrl ? ['-e', `DATABASE_URL=${databaseUrl}`] : [];
   await docker([
     'run',
     '-d',
@@ -63,6 +64,7 @@ export async function ensureSandbox(id: string) {
     uid,
     '--network',
     config.network,
+    ...envArgs,
     '-v',
     `${wsDir(id)}:/workspace`,
     '-v',

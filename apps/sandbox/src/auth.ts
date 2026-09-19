@@ -25,7 +25,12 @@ export async function hmacAuth(c: Context<SandboxEnv>, next: Next) {
   // 已发布应用的后端反代（/sandbox/:id/app/*）对公网开放，无需 HMAC；
   // 且沙箱服务仅监听 127.0.0.1（经 A 机隧道访问），不对外暴露。
   const url = new URL(c.req.url);
-  if (/^\/sandbox\/[^/]+\/app(\/|$)/.test(url.pathname)) {
+  if (
+    /^\/sandbox\/[^/]+\/(app|devapp)(\/|$)/.test(url.pathname) ||
+    /^\/sandbox\/[^/]+\/preview(\/|$)/.test(url.pathname)
+  ) {
+    // 豁免鉴权（这些路径经前门对公网开放，用于反代）。注意：不在此消费 body，
+    // 否则下游代理无法再次读取。
     await next();
     return;
   }

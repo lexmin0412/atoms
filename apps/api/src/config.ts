@@ -8,10 +8,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: resolve(here, '../../../.env') });
 
 export const config = {
-  databaseUrl:
-    process.env.DATABASE_URL ?? 'postgres://huangmin@127.0.0.1:5432/atoms',
+  databaseUrl: process.env.DATABASE_URL ?? 'postgres://huangmin@127.0.0.1:5432/atoms',
+  /** 应用库（用户项目数据），与平台库分离 */
+  appDatabaseUrl: process.env.APP_DATABASE_URL ?? process.env.DATABASE_URL ?? '',
   /** 已发布应用（跑在 B 机容器里）连接数据库用的地址，通常是 A 机的可达地址 */
   releaseDatabaseUrl: process.env.RELEASE_DATABASE_URL ?? '',
+  /** 只读角色（数据库查看用）：连接串与密码 */
+  readonlyDatabaseUrl: process.env.READONLY_DATABASE_URL ?? '',
+  readonlyPassword: process.env.READONLY_DB_PASSWORD ?? '',
   apiPort: Number(process.env.API_PORT ?? 8787),
   sessionSecret: process.env.SESSION_SECRET ?? 'dev-secret',
   llm: {

@@ -3,6 +3,7 @@ import { DefaultChatTransport } from 'ai';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
+import DatabaseView from '../components/DatabaseView';
 import Reasoning from '../components/Reasoning';
 import { api } from '../lib/api';
 
@@ -164,11 +165,13 @@ export default function Chat() {
   const [files, setFiles] = useState<string[]>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState('');
-  const [tab, setTab] = useState<'preview' | 'files'>('preview');
+  const [tab, setTab] = useState<'preview' | 'files' | 'database'>('preview');
   const [previewVersion, setPreviewVersion] = useState(0);
+  const [previewSrc, setPreviewSrc] = useState('');
   const [showPanel, setShowPanel] = useState(false);
   const [deploy, setDeploy] = useState<{ status: string; url?: string } | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [dbAvailable, setDbAvailable] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const transport = useMemo(
@@ -259,6 +262,10 @@ export default function Chat() {
       .catch(() => {});
     refreshTree();
     api
+      .previewUrl(id)
+      .then((r) => setPreviewSrc(r.url))
+      .catch(() => {});
+    api
       .deployment(id)
       .then((r) => {
         if (r.status && r.status !== 'none') setDeploy({ status: r.status, url: r.url });
@@ -273,6 +280,18 @@ export default function Chat() {
       refreshTree();
       if (activeFile) openFile(activeFile);
       setPreviewVersion((v) => v + 1);
+      if (id) {
+        // 预览用独立子域；若有后端则启动开发应用（/api 才通）
+        api
+          .previewUrl(id)
+          .then((r) => setPreviewSrc(r.url))
+          .catch(() => {});
+        api.startDevApp(id).catch(() => {});
+        api
+          .dbAvailability(id)
+          .then((r) => setDbAvailable(r.dev.available || r.prod.available))
+          .catch(() => {});
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
@@ -420,6 +439,19 @@ export default function Chat() {
           >
             文件
           </button>
+          {dbAvailable && (
+            <button
+              onClick={() => setTab('database')}
+              className={
+                'rounded px-2 py-1 text-sm ' +
+                (tab === 'database'
+                  ? 'bg-neutral-100 font-medium dark:bg-neutral-800'
+                  : 'text-neutral-500')
+              }
+            >
+              数据库
+            </button>
+          )}
           <div className="ml-auto flex items-center gap-1">
             {tab === 'preview' && (
               <button
@@ -488,12 +520,18 @@ export default function Chat() {
         )}
 
         {tab === 'preview' ? (
-          <iframe
-            key={previewVersion}
-            title="preview"
-            src={`/api/projects/${id}/preview/`}
-            className="min-h-0 w-full flex-1 bg-white"
-          />
+          previewSrc ? (
+            <iframe
+              key={previewVersion}
+              title="preview"
+              src={previewSrc + (previewVersion ? `?v=${previewVersion}` : '')}
+              className="min-h-0 w-full flex-1 bg-white"
+            />
+          ) : (
+            <p className="p-4 text-sm text-neutral-400">预览准备中…</p>
+          )
+        ) : tab === 'database' ? (
+          <DatabaseView projectId={id as string} />
         ) : (
           <div className="flex min-h-0 flex-1">
             <div className="w-44 shrink-0 overflow-y-auto border-r border-neutral-200 py-2 text-xs dark:border-neutral-800">

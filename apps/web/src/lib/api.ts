@@ -65,6 +65,11 @@ export const api = {
   usage: () => req<UsageResponse>('/api/usage'),
   previewVersion: (id: string) =>
     req<{ version: string }>(`/api/projects/${id}/preview-version`),
+  previewUrl: (id: string) => req<{ url: string }>(`/api/projects/${id}/preview-url`),
+  startDevApp: (id: string) =>
+    req<{ hasBackend: boolean; ready: boolean }>(`/api/projects/${id}/devapp`, {
+      method: 'POST',
+    }),
   publish: (id: string) =>
     req<{ status: string; url: string }>(`/api/projects/${id}/publish`, {
       method: 'POST',
@@ -73,4 +78,26 @@ export const api = {
     req<{ status: string; url?: string }>(`/api/projects/${id}/deployment`),
   unpublish: (id: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/unpublish`, { method: 'POST' }),
+  dbAvailability: (id: string) =>
+    req<{
+      dev: { available: boolean; tables: number };
+      prod: { available: boolean; tables: number };
+    }>(`/api/projects/${id}/db/availability`),
+  dbTables: (id: string, env: 'dev' | 'prod') =>
+    req<{ env: string; tables: { name: string; rows: number | null }[] }>(
+      `/api/projects/${id}/db/tables?env=${env}`,
+    ),
+  dbColumns: (id: string, env: 'dev' | 'prod', table: string) =>
+    req<{ table: string; columns: { name: string; type: string; nullable: boolean }[] }>(
+      `/api/projects/${id}/db/tables/${encodeURIComponent(table)}?env=${env}`,
+    ),
+  dbRows: (id: string, env: 'dev' | 'prod', table: string, page: number) =>
+    req<{
+      rows: Record<string, unknown>[];
+      total: number;
+      page: number;
+      pageSize: number;
+    }>(
+      `/api/projects/${id}/db/tables/${encodeURIComponent(table)}/rows?env=${env}&page=${page}`,
+    ),
 };

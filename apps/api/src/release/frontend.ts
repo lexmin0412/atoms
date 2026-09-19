@@ -1,6 +1,8 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, extname, join } from 'node:path';
+
 import COS from 'cos-nodejs-sdk-v5';
+
 import { config } from '../config';
 
 /**

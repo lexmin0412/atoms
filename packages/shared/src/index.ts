@@ -17,7 +17,7 @@ export interface ExecChunk {
  * Design 2 用 SandboxRuntime（B 机容器），本地可用 VirtualRuntime（内存）。
  */
 export interface Runtime {
-  open(projectId: string, files: FileMap): Promise<Workspace>;
+  open(projectId: string, files: FileMap, databaseUrl?: string): Promise<Workspace>;
   close(ws: Workspace): Promise<void>;
 
   readFile(ws: Workspace, path: string): Promise<string>;
