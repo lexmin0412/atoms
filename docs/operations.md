@@ -12,6 +12,8 @@
 | 容器非交互 | 沙箱容器 `CI=true` | 避免 pnpm 无 TTY 时 `ABORTED_REMOVE_MODULES_DIR` 直接退出 | — |
 | 沙箱并发回收 | B 机沙箱服务 | 池满时回收最久空闲容器（保留工作区文件），不阻塞用户 | `journalctl -u atoms-sandbox` |
 | 上下文保护 | A 机 `context.ts` / `compress.ts` | 历史裁剪 + 超 80% 软上限自动归纳压缩，避免上游断流 | `pm2 logs atoms-api`（`[chat] 上下文 …`） |
+| 进程级兜底 | A 机 `index.ts` | 未处理的 Promise 拒绝只记日志不退出（避免抖动导致整体重启）；未捕获异常记录后退出并交给 pm2 拉起 | `pm2 logs atoms-api` |
+| 单轮时长上限 | A 机 `CHAT_MAX_ROUND_MS`（默认 15 分钟） | 上游卡死时不再无限等待；已完成的改动已落库，可继续下一轮 | `[chat]` 日志 |
 
 ## 二、排查顺序（从上到下）
 

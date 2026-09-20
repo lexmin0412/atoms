@@ -197,6 +197,8 @@ export async function maybeCompress(opts: {
         (state.context_summary ? `【已有摘要】\n${state.context_summary}\n\n` : '') +
         `【新增历史】\n${JSON.stringify(delta).slice(0, 120_000)}`,
       maxRetries: 1,
+      // 压缩本身也要有时限：卡住会连带拖慢整轮对话
+      abortSignal: AbortSignal.timeout(90_000),
       headers: {
         'x-opencode-session': projectId,
         'User-Agent': 'atoms-demo/1.0',

@@ -33,6 +33,8 @@ import type { Env } from './auth';
 
 /** 单轮最多跑多少步（含工具往返）；到顶会停下并记录日志，用户可继续下一轮 */
 const MAX_STEPS = 30;
+/** 单轮最长时长上限：上游卡死时避免前端一直转圈（到点按中止处理，已完成的改动已落库） */
+const MAX_ROUND_MS = Number(process.env.CHAT_MAX_ROUND_MS ?? 15 * 60 * 1000);
 
 export const chatRoutes = new Hono<Env>();
 
@@ -328,8 +330,12 @@ chatRoutes.post('/:id/chat', async (c) => {
         model,
         system,
         // 客户端断开（点「停止」/关页面）→ 立刻停止生成与工具执行，
-        // 否则服务端会继续烧 token、继续占用沙箱（曾导致并发池被占满、后续消息全部失败）
-        abortSignal: c.req.raw.signal,
+        // 否则服务端会继续烧 token、继续占用沙箱（曾导致并发池被占满、后续消息全部失败）；
+        // 同时叠加单轮最长时长，避免上游卡死时前端无限等待。
+        abortSignal: AbortSignal.any([
+          c.req.raw.signal,
+          AbortSignal.timeout(MAX_ROUND_MS),
+        ]),
         messages: await convertToModelMessages(pruned),
         tools,
         // 逐步检查：累计消耗达到起始余额即优雅停止本轮循环

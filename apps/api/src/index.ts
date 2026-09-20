@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 
 import { config, validateConfig } from './config';
 import { originGuard } from './origin';
+import { logErr } from './redact';
 import { fail } from './respond';
 import { authRoutes } from './routes/auth';
 import { chatRoutes } from './routes/chat';
@@ -12,6 +13,18 @@ import { projectRoutes } from './routes/projects';
 import { skillRoutes } from './routes/skills';
 
 validateConfig();
+
+// 进程级兜底：
+// - 未处理的 Promise 拒绝（例如流已断开时的写入、fire-and-forget 的落库）
+//   只记日志、不退出：否则一次网络抖动就会让整个服务重启、打断所有进行中的请求。
+// - 未捕获异常说明状态已不可信 → 记日志后退出，交给 pm2 立刻拉起（干净恢复）。
+process.on('unhandledRejection', (reason) => {
+  logErr('[api] unhandledRejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  logErr('[api] uncaughtException（进程将退出，pm2 会自动重启）:', err);
+  process.exit(1);
+});
 
 const app = new Hono();
 
