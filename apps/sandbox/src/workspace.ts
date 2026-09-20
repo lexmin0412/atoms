@@ -129,7 +129,11 @@ export async function isSandboxRunning(id: string) {
   return isRunning(id);
 }
 
-export function execStream(id: string, cmd: string): ReadableStream<Uint8Array> {
+export function execStream(
+  id: string,
+  cmd: string,
+  onActivity?: () => void,
+): ReadableStream<Uint8Array> {
   const child = spawn('docker', ['exec', containerName(id), 'sh', '-lc', cmd], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -138,12 +142,14 @@ export function execStream(id: string, cmd: string): ReadableStream<Uint8Array> 
     start(controller) {
       const push = (obj: unknown) =>
         controller.enqueue(enc.encode(JSON.stringify(obj) + '\n'));
-      child.stdout.on('data', (d: Buffer) =>
-        push({ stream: 'stdout', data: d.toString('utf8') }),
-      );
-      child.stderr.on('data', (d: Buffer) =>
-        push({ stream: 'stderr', data: d.toString('utf8') }),
-      );
+      child.stdout.on('data', (d: Buffer) => {
+        onActivity?.();
+        push({ stream: 'stdout', data: d.toString('utf8') });
+      });
+      child.stderr.on('data', (d: Buffer) => {
+        onActivity?.();
+        push({ stream: 'stderr', data: d.toString('utf8') });
+      });
       child.on('error', (err) => {
         push({ stream: 'stderr', data: String(err) });
         push({ exitCode: 1 });

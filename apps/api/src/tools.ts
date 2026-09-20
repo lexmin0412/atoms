@@ -72,7 +72,7 @@ export function createTools(
       inputSchema: z.object({
         cmd: z.string().describe('要执行的命令，例如 pnpm install'),
       }),
-      execute: async ({ cmd }) => {
+      execute: async ({ cmd }, { abortSignal }) => {
         // 工具层拦截：读取环境/主机信息的侦察命令直接拒绝，不执行
         const why = forbiddenReason(cmd);
         if (why) {
@@ -85,7 +85,7 @@ export function createTools(
 
         let out = '';
         let exitCode = 0;
-        for await (const ch of runtime.exec(ws, cmd)) {
+        for await (const ch of runtime.exec(ws, cmd, { signal: abortSignal })) {
           if (ch.data) {
             out += ch.data;
             // 流给前端的终端内容同样脱敏（用户看到的不该是凭据）

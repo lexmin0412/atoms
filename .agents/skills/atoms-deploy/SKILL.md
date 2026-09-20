@@ -106,6 +106,13 @@ ssh ... ubuntu@<B_HOST> 'cd <B_REPO> && docker build -t atoms-sandbox:latest doc
     `db:init` 会把存量表/序列 `alter ... owner to` 给项目角色；转移要求能 `SET ROLE`，
     故 provisioning 里显式 `grant <role> to <admin> with set true`（PG16 历史成员关系默认无 SET）。
     `atoms_ro` 由**项目角色自己的短连接**授权（只有 owner 能授）。schema 本身仍归管理角色。
+21h. **沙箱并发上限与按需回收**：默认 `SANDBOX_MAX=4`（2C4G、每容器 1G）。池满时沙箱服务会
+    **回收最久空闲的容器**（只删容器、保留工作区目录，源码不丢），仍不够才 429。
+    排查「用户提示模型服务不可用」时先看 A 的 `atoms-api-error.log` 有无
+    `[sandbox] POST /sandbox -> 429 {"error":"busy"}`——是并发池满，不是模型的问题。
+    服务重启后 seed 会把现有容器记为「刚用过」，60s 内不会回收。
+21i. **「停止」依赖 abortSignal**：`streamText` 必须带 `c.req.raw.signal`，否则客户端断开后
+    服务端仍继续生成/执行工具/占用沙箱。中断仍走「已完成步」结算（日志有 `[chat] 客户端中止生成`）。
 21f. **Agent 自己装的 npm CLI 落在共享卷，注意宿主/容器路径不是同一个字符串**：宿主是 `<SANDBOX_ROOT>/.pnpm-store/npm-global`，
     容器内是 `/pnpm-store/npm-global`（`/pnpm-store` 是挂载点）。用宿主路径去容器里 `mkdir` 会 `Permission denied`。
     另外容器 `sh` 是 **dash，login shell 会重置 PATH**，所以 `-e PATH=...` 不生效——镜像里用

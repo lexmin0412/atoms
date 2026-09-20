@@ -41,12 +41,18 @@ export function signature(
 
 export async function signedFetch(
   pathWithQuery: string,
-  init: { method: string; body?: string; timeoutMs?: number },
+  init: { method: string; body?: string; timeoutMs?: number; signal?: AbortSignal },
 ): Promise<Response> {
   const ts = String(Date.now());
   const body = init.body ?? '';
   const sig = signature(config.sandbox.secret, ts, init.method, pathWithQuery, body);
   const timeoutMs = init.timeoutMs ?? TIMEOUT_MS;
+  const timeout = timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+  // 外部信号（用户点「停止」）与超时取并集：任一触发即中止
+  const signal =
+    init.signal && timeout
+      ? AbortSignal.any([init.signal, timeout])
+      : (init.signal ?? timeout);
   try {
     return await fetch(`${config.sandbox.url}${pathWithQuery}`, {
       method: init.method,
@@ -56,7 +62,7 @@ export async function signedFetch(
         'content-type': 'application/json',
       },
       body: body || undefined,
-      signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
+      signal,
     });
   } catch (err) {
     // 连不上 / 超时 / 隧道断：细节只落日志，对外给可重试的 503

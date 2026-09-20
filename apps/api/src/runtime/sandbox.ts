@@ -76,12 +76,17 @@ export class SandboxRuntime implements Runtime {
     return r.files;
   }
 
-  async *exec(ws: Workspace, cmd: string): AsyncIterable<ExecChunk> {
+  async *exec(
+    ws: Workspace,
+    cmd: string,
+    opts?: { signal?: AbortSignal },
+  ): AsyncIterable<ExecChunk> {
     // 流式执行：长命令（pnpm install / build）可能跑几分钟，不能套用请求超时
     const res = await signedFetch(`/sandbox/${ws.id}/exec`, {
       method: 'POST',
       body: JSON.stringify({ cmd }),
       timeoutMs: 0,
+      signal: opts?.signal,
     });
     if (!res.ok || !res.body) {
       throw new SandboxError(

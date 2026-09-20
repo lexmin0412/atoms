@@ -3,7 +3,7 @@ import { Hono, type Context } from 'hono';
 
 import { hmacAuth, type SandboxEnv } from './auth';
 import { config } from './config';
-import { touch, forget, startReaper } from './lifecycle';
+import { touch, forget, ensureCapacity, startReaper } from './lifecycle';
 import {
   startRelease,
   stopRelease,
@@ -29,7 +29,6 @@ import {
   readDistFile,
   distVersion,
   snapshotDist,
-  listRunningSandboxIds,
 } from './workspace';
 
 /** 反代超时：后端卡死时不要一直挂着 */
@@ -94,11 +93,16 @@ app.post('/sandbox', async (c) => {
   );
   if (!sandboxId) return c.json({ error: 'sandboxId_required' }, 400);
 
-  // 并发闸门：超出上限则拒绝（避免 2C4G 被撑爆）
-  const running = await listRunningSandboxIds();
-  if (running.length >= config.maxSandboxes && !running.includes(sandboxId)) {
+  // 并发闸门：超出上限时先回收空闲沙箱（工作区文件保留），仍不够才拒绝
+  const cap = await ensureCapacity(sandboxId);
+  if (!cap.ok) {
     return c.json(
-      { error: 'busy', running: running.length, max: config.maxSandboxes },
+      {
+        error: 'busy',
+        running: cap.running,
+        max: cap.max,
+        message: `同时运行的项目已达上限（${cap.max} 个），请稍后重试；空闲项目会在 30 分钟内自动回收。`,
+      },
       429,
     );
   }
@@ -116,8 +120,21 @@ app.post('/sandbox/:id/exec', async (c) => {
   const id = c.req.param('id');
   const { cmd } = body<{ cmd?: string }>(c);
   if (!cmd) return c.json({ error: 'cmd_required' }, 400);
+  const cap = await ensureCapacity(id);
+  if (!cap.ok) {
+    return c.json(
+      {
+        error: 'busy',
+        running: cap.running,
+        max: cap.max,
+        message: `同时运行的项目已达上限（${cap.max} 个），请稍后重试。`,
+      },
+      429,
+    );
+  }
   await ensureSandbox(id);
-  const stream = execStream(id, cmd);
+  // 长命令期间持续 touch：避免「正在跑安装」的沙箱被判为空闲而回收
+  const stream = execStream(id, cmd, () => touch(id));
   return new Response(stream, {
     headers: {
       'Content-Type': 'application/x-ndjson',
@@ -137,6 +154,18 @@ app.get('/sandbox/:id/file', async (c) => {
 app.put('/sandbox/:id/file', async (c) => {
   const { path, content } = body<{ path?: string; content?: string }>(c);
   if (!path) return c.json({ error: 'path_required' }, 400);
+  const cap = await ensureCapacity(c.req.param('id'));
+  if (!cap.ok) {
+    return c.json(
+      {
+        error: 'busy',
+        running: cap.running,
+        max: cap.max,
+        message: '同时运行的项目已达上限，请稍后重试。',
+      },
+      429,
+    );
+  }
   await writeWsFile(c.req.param('id'), path, content ?? '');
   return c.json({ ok: true });
 });

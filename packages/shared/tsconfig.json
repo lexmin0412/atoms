@@ -1,7 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // 仅为拿到 AbortSignal 等标准 Web 类型（Runtime 接口要用）
+    "lib": ["ES2022", "DOM"]
   },
   "include": ["src"]
 }

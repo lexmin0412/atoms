@@ -71,7 +71,11 @@ export interface Runtime {
   editFile(ws: Workspace, path: string, oldStr: string, newStr: string): Promise<void>;
   listFiles(ws: Workspace): Promise<string[]>;
 
-  exec(ws: Workspace, cmd: string): AsyncIterable<ExecChunk>;
+  exec(
+    ws: Workspace,
+    cmd: string,
+    opts?: { signal?: AbortSignal },
+  ): AsyncIterable<ExecChunk>;
 
   /** 源码快照，必须跳过 node_modules / dist / .cache / .git */
   snapshot(ws: Workspace): Promise<FileMap>;

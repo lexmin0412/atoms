@@ -64,13 +64,33 @@ function clampChatWidth(width: number, containerWidth: number) {
   return Math.round(Math.min(Math.max(width, CHAT_MIN), maxChat));
 }
 
+/**
+ * 错误正文可能是后端返回的结构化 JSON（如 `{"error":"busy","message":"..."}`）。
+ * 这类应该直接展示其中的 message —— 否则「含 error 字样」会被下面的兜底规则
+ * 误判成「模型服务不可用」（曾把「沙箱并发已满」说成模型问题）。
+ */
+function structuredMessage(msg: string): string | null {
+  const json = /\{[\s\S]*\}/.exec(msg);
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json[0]) as { message?: unknown };
+    return typeof parsed.message === 'string' && /[\u4e00-\u9fa5]/.test(parsed.message)
+      ? parsed.message
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function friendlyError(msg: string): string {
+  const structured = structuredMessage(msg);
+  if (structured) return structured;
   // 注意：这几种是不同原因，别合并成一句话（否则用户不知道该怎么办）
   if (/积分已用完|额度会在下个周期/.test(msg)) {
     return '积分已用完，额度会在下个周期自动恢复。';
   }
-  if (/当前运行中的应用较多|busy/.test(msg)) {
-    return '当前并发已满（同时运行的应用较多），请等一会儿再试。';
+  if (/busy|并发|上限/.test(msg)) {
+    return '同时运行的项目较多，请稍后重试（空闲项目会自动回收）。';
   }
   if (/模型服务繁忙|额度不足/.test(msg)) {
     return '模型服务繁忙（上游限流），请稍后重试。';

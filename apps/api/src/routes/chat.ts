@@ -215,6 +215,9 @@ chatRoutes.post('/:id/chat', async (c) => {
       const result = streamText({
         model,
         system,
+        // 客户端断开（点「停止」/关页面）→ 立刻停止生成与工具执行，
+        // 否则服务端会继续烧 token、继续占用沙箱（曾导致并发池被占满、后续消息全部失败）
+        abortSignal: c.req.raw.signal,
         messages: await convertToModelMessages(withSkillContext(uiMessages, selected)),
         tools,
         // 逐步检查：累计消耗达到起始余额即优雅停止本轮循环
@@ -263,15 +266,20 @@ chatRoutes.post('/:id/chat', async (c) => {
         if (settledCredits > 0) {
           // 回读失败时省略 balance（前端保留上次值），不要伪造 0 误导用户
           const remaining = await ensureGrant(user.id).catch(() => null);
-          writer.write({
-            type: 'data-credits',
-            id: 'credits',
-            data: {
-              credits: settledCredits,
-              ...(remaining === null ? {} : { balance: remaining }),
-              budgetExceeded,
-            },
-          } as never);
+          const write = writer.write.bind(writer);
+          try {
+            write({
+              type: 'data-credits',
+              id: 'credits',
+              data: {
+                credits: settledCredits,
+                ...(remaining === null ? {} : { balance: remaining }),
+                budgetExceeded,
+              },
+            } as never);
+          } catch {
+            // 客户端已断开：结算已经完成，丢这条 UI 通知即可
+          }
         }
       }
     },
@@ -291,7 +299,15 @@ chatRoutes.post('/:id/chat', async (c) => {
       clearBusy(projectId);
     },
     onError: (err) => {
-      logErr('[chat] stream error:', err);
+      const aborted =
+        c.req.raw.signal.aborted ||
+        (err instanceof Error &&
+          (err.name === 'AbortError' || /abort/i.test(err.message)));
+      if (aborted) {
+        console.log(`[chat] 客户端中止生成 ${projectId}（已结算并停止工具执行）`);
+      } else {
+        logErr('[chat] stream error:', err);
+      }
       clearBusy(projectId);
       // 上游中断也要按实际用量结算（若 onEnd 未触发）
       settle().catch((e) => logErr('[chat] 中断结算失败:', e));
@@ -306,6 +322,7 @@ chatRoutes.post('/:id/chat', async (c) => {
           )
           .catch((e) => logErr('[chat] 中断补偿快照失败:', e));
       }, 3000);
+      if (aborted) return '已停止生成。';
       const msg = err instanceof Error ? err.message : String(err);
       if (/MissingSessionID|401|403/i.test(msg)) {
         return '模型服务鉴权失败，请联系管理员。';
