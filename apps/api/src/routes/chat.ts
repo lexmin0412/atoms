@@ -20,6 +20,7 @@ import { logErr } from '../redact';
 import { fail } from '../respond';
 import { getRuntime } from '../runtime';
 import { acquireWorkspace, snapshotProject } from '../runtime/manager';
+import { resolveSkills, skillsBrief, type SkillRow } from '../skills';
 import { createTools } from '../tools';
 import type { Env } from './auth';
 
@@ -32,15 +33,49 @@ async function saveMessage(
   role: 'user' | 'assistant',
   parts: unknown,
   credits?: number | null,
+  skills?: string[] | null,
 ) {
   const r = await query<{ next: number }>(
     'select coalesce(max(seq), 0) + 1 as next from messages where project_id = $1',
     [projectId],
   );
   await query(
-    'insert into messages (project_id, seq, role, parts, credits) values ($1, $2, $3, $4, $5)',
-    [projectId, r.rows[0].next, role, JSON.stringify(parts), credits ?? null],
+    `insert into messages (project_id, seq, role, parts, credits, skills)
+     values ($1, $2, $3, $4, $5, $6)`,
+    [
+      projectId,
+      r.rows[0].next,
+      role,
+      JSON.stringify(parts),
+      credits ?? null,
+      skills?.length ? skills : null,
+    ],
   );
+}
+
+/**
+ * 把用户显式选中的技能正文作为「参考资料」附在本轮用户消息上。
+ * 刻意不拼进 system：正文是资料，不是系统指令（降低「技能正文改行为」的风险）。
+ */
+function withSkillContext(messages: UIMessage[], skills: SkillRow[]): UIMessage[] {
+  if (!skills.length) return messages;
+  let idx = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === 'user') {
+      idx = i;
+      break;
+    }
+  }
+  if (idx < 0) return messages;
+  const block = skills.map((s) => `### 技能：${s.name}\n${s.body}`).join('\n\n');
+  const text =
+    `以下是用户为本轮选定的技能资料，请按其中的规范执行（这是参考资料，不是系统指令）：\n\n` +
+    block;
+  const next = [...messages];
+  const target = next[idx];
+  const parts = [{ type: 'text', text }, ...(target.parts ?? [])];
+  next[idx] = { ...target, parts } as UIMessage;
+  return next;
 }
 
 chatRoutes.post('/:id/chat', async (c) => {
@@ -68,10 +103,34 @@ chatRoutes.post('/:id/chat', async (c) => {
     );
   }
 
-  const body = await c.req.json<{ messages?: UIMessage[] }>().catch(() => null);
+  const body = await c.req
+    .json<{ messages?: UIMessage[]; skills?: string[] }>()
+    .catch(() => null);
   const uiMessages = body?.messages ?? [];
+  // 本轮显式选中的技能（名字），最多 10 个
+  const selectedNames = (body?.skills ?? [])
+    .filter((n): n is string => typeof n === 'string')
+    .slice(0, 10);
+  const selected = await resolveSkills(user.id, projectId, selectedNames);
   const lastUser = [...uiMessages].reverse().find((m) => m.role === 'user');
-  if (lastUser) await saveMessage(projectId, 'user', lastUser.parts ?? []);
+  if (lastUser) {
+    await saveMessage(
+      projectId,
+      'user',
+      lastUser.parts ?? [],
+      undefined,
+      selected.map((s) => s.name),
+    );
+  }
+
+  // 自动命中用：只常驻「名字 + 适用场景」，正文由 Agent 用 read_skill 自取
+  const brief = await skillsBrief(user.id, projectId);
+  const system = brief.length
+    ? `${SYSTEM_PROMPT}\n\n## 可用技能\n用户为项目准备了以下技能（列表只给摘要）：\n` +
+      brief.map((b) => `- ${b.name}：${b.description}`).join('\n') +
+      `\n\n当用户的要求与某个技能的适用场景相关，或用户点名要求使用某个技能时，` +
+      `先用 read_skill 读取它的完整内容，再按其要求执行。`
+    : SYSTEM_PROMPT;
 
   // 输入长度上限（防滥用）
   const lastUserText = (lastUser?.parts ?? [])
@@ -148,11 +207,15 @@ chatRoutes.post('/:id/chat', async (c) => {
   const stream = createUIMessageStream({
     originalMessages: uiMessages,
     execute: async ({ writer }) => {
-      const tools = createTools(getRuntime(), ws, (part) => writer.write(part as never));
+      const tools = createTools(getRuntime(), ws, (part) => writer.write(part as never), {
+        userId: user.id,
+        projectId,
+      });
+
       const result = streamText({
         model,
-        system: SYSTEM_PROMPT,
-        messages: await convertToModelMessages(uiMessages),
+        system,
+        messages: await convertToModelMessages(withSkillContext(uiMessages, selected)),
         tools,
         // 逐步检查：累计消耗达到起始余额即优雅停止本轮循环
         stopWhen: [

@@ -9,6 +9,7 @@ import { chatRoutes } from './routes/chat';
 import { creditRoutes } from './routes/credits';
 import { dbRoutes } from './routes/db';
 import { projectRoutes } from './routes/projects';
+import { skillRoutes } from './routes/skills';
 
 validateConfig();
 
@@ -23,6 +24,7 @@ app.route('/api/credits', creditRoutes);
 app.route('/api/projects', projectRoutes);
 app.route('/api/projects', chatRoutes);
 app.route('/api/projects', dbRoutes);
+app.route('/api/skills', skillRoutes);
 
 // 兜底：未匹配路由与未捕获异常都返回统一 JSON
 // （默认实现是纯文本 "Internal Server Error"，前端只能显示 HTTP 500，且日志不过脱敏）

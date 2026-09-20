@@ -23,6 +23,7 @@ const FRIENDLY: Record<string, string> = {
   devapp_unreachable: '开发预览后端未运行，请点「重新构建」后再试',
   release_unreachable: '应用后端暂时无响应，请稍后重试',
   forbidden_origin: '请求来源校验失败，请刷新页面后重试',
+  skill_limit: '技能数量已达上限，请先删除一些',
 };
 
 /** 登录/注册自身的 401 是「账号密码错」，不该触发全局登出 */
@@ -69,6 +70,25 @@ export interface CreditSummary {
   spent: number;
   monthlyGrant: number;
   period: string;
+}
+
+/** 用户自定义技能（知识型：正文作为参考资料注入，不作为系统指令） */
+export interface SkillDto {
+  id: string;
+  name: string;
+  description: string;
+  body: string;
+  /** 保存时扫出的「疑似密钥」类别；非空则前端显示警告标识 */
+  secretFlags: string[];
+  scope: 'user' | 'project';
+  projectId: string | null;
+  updatedAt: string;
+}
+
+export interface SkillInput {
+  name: string;
+  description: string;
+  body: string;
 }
 
 export interface LedgerEntry {
@@ -172,6 +192,24 @@ export const api = {
     req<{ ok: boolean }>(`/api/projects/${id}/fs/node/${nodeId}`, { method: 'DELETE' }),
   rebuild: (id: string) =>
     req<{ ok: boolean; log?: string }>(`/api/projects/${id}/rebuild`, { method: 'POST' }),
+  skills: (projectId?: string) =>
+    req<{
+      skills: SkillDto[];
+      limit: number;
+      limits: { name: number; description: number; body: number };
+    }>(`/api/skills${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
+  createSkill: (d: SkillInput & { projectId?: string | null }) =>
+    req<{ skill: SkillDto }>('/api/skills', {
+      method: 'POST',
+      body: JSON.stringify(d),
+    }),
+  updateSkill: (id: string, d: SkillInput) =>
+    req<{ skill: SkillDto }>(`/api/skills/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(d),
+    }),
+  deleteSkill: (id: string) =>
+    req<{ ok: boolean }>(`/api/skills/${id}`, { method: 'DELETE' }),
   credits: () => req<CreditSummary>('/api/credits'),
   creditsLedger: (page: number, projectId?: string) =>
     req<{ rows: LedgerEntry[]; total: number; page: number; pageSize: number }>(

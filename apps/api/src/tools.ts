@@ -3,12 +3,23 @@ import { tool } from 'ai';
 import { z } from 'zod';
 
 import { forbiddenReason, scrubSecrets } from './redact';
+import { skillBody, skillsBrief } from './skills';
 
 const MAX_CMD_OUTPUT = 8000;
 
 export type Emit = (part: unknown) => void;
 
-export function createTools(runtime: Runtime, ws: Workspace, emit?: Emit) {
+export interface ToolContext {
+  userId: string;
+  projectId: string;
+}
+
+export function createTools(
+  runtime: Runtime,
+  ws: Workspace,
+  emit?: Emit,
+  ctx?: ToolContext,
+) {
   return {
     list_files: tool({
       description:
@@ -95,6 +106,35 @@ export function createTools(runtime: Runtime, ws: Workspace, emit?: Emit) {
         };
       },
     }),
+
+    // ---- 技能：自动命中用（用户显式选中的技能由后端直接注入正文）----
+    ...(ctx
+      ? {
+          list_skills: tool({
+            description:
+              '列出用户为本项目准备的自定义技能（名字 + 适用场景）。当用户的请求可能与某个技能的适用场景相关时，先调用它看看有没有可用的技能。',
+            inputSchema: z.object({}),
+            execute: async () => ({
+              skills: await skillsBrief(ctx.userId, ctx.projectId),
+            }),
+          }),
+
+          read_skill: tool({
+            description:
+              '读取指定技能的完整内容（工作规范 / 操作手册）。当用户明确要求使用某个技能，或 list_skills 里有技能与当前任务明显相关时调用。若技能内容要求使用某个命令行工具，先 `npm i -g <包名>` 装上再执行。',
+            inputSchema: z.object({
+              name: z.string().describe('技能名称，取自 list_skills 的结果'),
+            }),
+            execute: async ({ name }) => {
+              const hit = await skillBody(ctx.userId, ctx.projectId, name);
+              if (!hit) {
+                return { found: false, note: `没有找到名为「${name}」的技能` };
+              }
+              return { found: true, name: hit.name, content: hit.body };
+            },
+          }),
+        }
+      : {}),
   };
 }
 

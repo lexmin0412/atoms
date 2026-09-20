@@ -5,4 +5,10 @@ FROM node:22-bookworm-slim
 RUN printf 'registry=https://mirrors.tencentyun.com/npm\nstore-dir=/pnpm-store\ndangerously-allow-all-builds=true\n' > /usr/local/etc/npmrc \
  && npm install -g pnpm@10
 
+# 技能依赖（npm CLI）装在共享卷 /pnpm-store/npm-global；
+# 容器以非 root 运行，且 sh 是 dash（login shell 会重置 PATH），
+# 所以显式在 profile.d 里把该 bin 前置，保证 `sh -lc <cmd>` 能找到它们。
+RUN printf 'export PATH=/pnpm-store/npm-global/bin:$PATH\n' > /etc/profile.d/atoms-deps.sh \
+ && chmod 0644 /etc/profile.d/atoms-deps.sh
+
 WORKDIR /workspace

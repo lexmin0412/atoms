@@ -36,6 +36,13 @@ function Icon({ name, size = 15 }: { name: string; size?: number }) {
           <path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
         </svg>
       );
+    case 'skills':
+      return (
+        <svg {...c}>
+          <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" />
+          <path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" />
+        </svg>
+      );
     case 'panel':
       return (
         <svg {...c}>
@@ -123,6 +130,7 @@ function UserBox({
 
 const NAV = [
   { to: '/', label: '首页', icon: 'home' },
+  { to: '/skills', label: '技能', icon: 'skills' },
   { to: '/credits', label: '积分', icon: 'credits' },
 ];
 

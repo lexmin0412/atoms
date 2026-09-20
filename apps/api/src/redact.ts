@@ -10,6 +10,8 @@ const KEYVAL_RE =
   /((?:api[_-]?key|apikey|secret[_-]?key|access[_-]?key|private[_-]?key|password|passwd|pwd|token|authorization|bearer)\s*[:=]\s*)([^\s'"`,;]{6,})/gi;
 const PRIVATE_KEY_RE =
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g;
+/** 检测用（更松）：只要出现私钥头就算，哪怕被截断粘贴、没有 END */
+const PRIVATE_KEY_HEAD_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
 const HMAC_RE = /\bx-atoms-(?:sig|ts)\s*[:=]\s*\S+/gi;
 
@@ -21,6 +23,28 @@ export function scrubSecrets(text: string): string {
     .replace(JWT_RE, '[redacted:jwt]')
     .replace(HMAC_RE, '[redacted:signature]')
     .replace(KEYVAL_RE, '$1[redacted]');
+}
+
+/**
+ * 扫描文本里的「疑似凭据」，返回人类可读的类别（用于 Skill 管理侧打警告标识）。
+ * 只提示、不阻断 —— 是否真的泄露由用户判断。
+ */
+const SECRET_KINDS: { re: RegExp; label: string }[] = [
+  { re: CONN_RE, label: '数据库连接串' },
+  { re: PRIVATE_KEY_HEAD_RE, label: '私钥' },
+  { re: JWT_RE, label: 'JWT' },
+  { re: HMAC_RE, label: '签名/时间戳' },
+  { re: KEYVAL_RE, label: '疑似密钥（key=value）' },
+];
+
+export function secretFindings(text: string): string[] {
+  if (!text) return [];
+  const found: string[] = [];
+  for (const { re, label } of SECRET_KINDS) {
+    re.lastIndex = 0;
+    if (re.test(text)) found.push(label);
+  }
+  return found;
 }
 
 /** 看起来像凭据的整段文本（用于判断是否需要提示用户） */

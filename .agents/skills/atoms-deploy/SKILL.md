@@ -106,6 +106,12 @@ ssh ... ubuntu@<B_HOST> 'cd <B_REPO> && docker build -t atoms-sandbox:latest doc
     `db:init` 会把存量表/序列 `alter ... owner to` 给项目角色；转移要求能 `SET ROLE`，
     故 provisioning 里显式 `grant <role> to <admin> with set true`（PG16 历史成员关系默认无 SET）。
     `atoms_ro` 由**项目角色自己的短连接**授权（只有 owner 能授）。schema 本身仍归管理角色。
+21f. **Agent 自己装的 npm CLI 落在共享卷，注意宿主/容器路径不是同一个字符串**：宿主是 `<SANDBOX_ROOT>/.pnpm-store/npm-global`，
+    容器内是 `/pnpm-store/npm-global`（`/pnpm-store` 是挂载点）。用宿主路径去容器里 `mkdir` 会 `Permission denied`。
+    另外容器 `sh` 是 **dash，login shell 会重置 PATH**，所以 `-e PATH=...` 不生效——镜像里用
+    `/etc/profile.d/atoms-deps.sh` 前置 `npm-global/bin`（**改了要重建镜像并删旧沙箱容器**）。
+21g. **A→B 的 HMAC 时间戳是毫秒**（`String(Date.now())`）。用 `date +%s`（秒）会因超出 60s 容差被判 `expired`
+    （手写调试脚本时很容易踩；沿用 `sign()` 的实现即可）。
 21e. **`docker inspect` 对已停止容器返回字面量 `invalid IP`**（不是空串）：IP 判断必须正则校验
     （`^\\d{1,3}(\\.\\d{1,3}){3}$`），否则会拼出 `http://invalid IP:3002` → 代理 500 而非 503。
 21. **credits 环境变量只在服务端 `.env`**：`CREDITS_MONTHLY_GRANT`（默认 500）、`APPS_DOMAIN`（发布/预览域名）。**改 schema/加表后必须先 rsync 再 `db:init`**。

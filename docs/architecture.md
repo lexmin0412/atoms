@@ -231,7 +231,22 @@ GET    /api/projects/:id/deployment             发布状态（前端轮询到 r
 POST   /api/projects/:id/unpublish              下架
 GET    /api/credits                  余额 + 本周期用量（顺带触发周期发放）
 GET    /api/credits/ledger           消耗明细（分页，可按项目筛选）
+GET/POST /api/skills                 技能列表（用户级 + 项目级）/ 新建
+PUT/DELETE /api/skills/:id           改 / 删
 ```
+
+**Skills（迭代 008）**：用户把规范/playbook 写成技能，Agent 按需参考。
+- 归属两级：`project_id` 为 null = 用户级（跨项目），否则项目级；每用户上限 20 个。
+- 唤起两条路：聊天输入框 `/` 显式选择（本轮生效），或 Agent 用 `list_skills` / `read_skill` 自动命中。
+- 注入：**显式选中的正文作为「参考资料」附在本轮用户消息上**（不是系统指令，降低正文改行为的风险）；
+  自动命中只常驻「名字 + 适用场景」，正文由 Agent 自取。`messages.skills` 记录每轮用了哪些。
+- 工具随用随装：技能正文提到命令行工具时，**Agent 在沙箱内自己 `npm i -g`**（用户不必知道包名）。
+  前提是沙箱全局 prefix 指向共享卷 `npm-global`（容器内 `/pnpm-store/npm-global`）——
+  容器 uid 1000 写不了 `/usr/local`，且 dash 的 login shell 会重置 PATH，
+  故镜像里用 `/etc/profile.d/atoms-deps.sh` 前置该 bin；装一次跨容器重建保留。
+  需要浏览器内核/系统库的工具沙箱内装不了，System Prompt 已说明。
+- 安全：保存时扫描疑似凭据（连接串/私钥/JWT/签名/`key=value`）→ 列表与编辑器显示**警告标识**（只提示不阻断）；
+  技能交付的是**知识**不是能力——不引入执行通道、不携带凭据（需要凭据的集成走未来的 MCP 层）。
 - `/chat` 走 SSE；nginx 必须关 buffering。
 - 额度：按积分（token 计量，见 `credits/`）；另有输入长度上限（4000 字）。
 

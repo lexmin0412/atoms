@@ -17,6 +17,9 @@ export async function docker(args: string[]) {
 export function wsDir(id: string) {
   return join(config.root, id);
 }
+
+/** 共享卷在【容器内】的挂载点（与宿主路径是两个世界，别混用） */
+export const STORE_MOUNT = '/pnpm-store';
 function containerName(id: string) {
   return `atoms-${id}`;
 }
@@ -48,7 +51,17 @@ export async function ensureSandbox(id: string, databaseUrl?: string) {
     await docker(['rm', '-f', containerName(id)]).catch(() => {});
   }
   const uid = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`;
-  const envArgs = databaseUrl ? ['-e', `DATABASE_URL=${databaseUrl}`] : [];
+  // 技能依赖的 npm CLI 装到【共享卷】：容器内 /usr/local 是 root 所有、uid 1000 写不了，
+  // 指到共享卷后既能装、又能跨容器重建保留（默认 registry 已是内网镜像）。
+  const containerPrefix = join(STORE_MOUNT, 'npm-global');
+  const envArgs = [
+    '-e',
+    `NPM_CONFIG_PREFIX=${containerPrefix}`,
+    // 注意：dash 作为 login shell 会重置 PATH，所以镜像里另有 /etc/profile.d 兜底
+    '-e',
+    `PATH=${containerPrefix}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+    ...(databaseUrl ? ['-e', `DATABASE_URL=${databaseUrl}`] : []),
+  ];
   await docker([
     'run',
     '-d',
@@ -68,7 +81,7 @@ export async function ensureSandbox(id: string, databaseUrl?: string) {
     '-v',
     `${wsDir(id)}:/workspace`,
     '-v',
-    `${store}:/pnpm-store`,
+    `${store}:${STORE_MOUNT}`,
     '-w',
     '/workspace',
     config.image,

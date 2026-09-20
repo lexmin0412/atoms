@@ -8,6 +8,7 @@ import Chat from './pages/Chat';
 import Credits from './pages/Credits';
 import Login from './pages/Login';
 import Projects from './pages/Projects';
+import Skills from './pages/Skills';
 
 function Shell({ user, onLogout }: { user: UserDto; onLogout: () => void }) {
   const { pathname } = useLocation();
@@ -90,6 +91,7 @@ export default function App() {
         <Route path="/" element={<Projects />} />
         <Route path="/p/:id" element={<Chat />} />
         <Route path="/credits" element={<Credits />} />
+        <Route path="/skills" element={<Skills />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

@@ -12,7 +12,8 @@ import { PopConfirm } from '../components/ui/confirm';
 import { IconCopy, IconRefresh, IconRocket, IconSparkle } from '../components/ui/icons';
 import { AtomsMark } from '../components/ui/Logo';
 import { Segmented, type SegmentedItem } from '../components/ui/Segmented';
-import { api } from '../lib/api';
+import { api, type SkillDto } from '../lib/api';
+import Skills from './Skills';
 
 // 懒加载：Streamdown + Shiki 体积较大，推迟到首条消息渲染时再加载
 const Markdown = lazy(() => import('../components/Markdown'));
@@ -289,7 +290,11 @@ export default function Chat() {
   const { id } = useParams<{ id: string }>();
   const [input, setInput] = useState('');
   const [fileVersion, setFileVersion] = useState(0);
-  const [tab, setTab] = useState<'preview' | 'files' | 'database'>('preview');
+  const [tab, setTab] = useState<'preview' | 'files' | 'database' | 'skills'>('preview');
+  /** 技能：列表（供 / 唤起）+ 本轮选中的技能名 */
+  const [skills, setSkills] = useState<SkillDto[]>([]);
+  const [pickedSkills, setPickedSkills] = useState<string[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [previewVersion, setPreviewVersion] = useState(0);
   const [previewSrc, setPreviewSrc] = useState('');
   /** 是否已有构建产物：null=未知（首次探测中）。没产物时不能渲染 iframe（会露出沙箱的 404 文本） */
@@ -481,6 +486,10 @@ export default function Chat() {
       .then((r) => setDbAvailable(r.dev.available || r.prod.available))
       .catch(() => {});
     api
+      .skills(id)
+      .then((r) => setSkills(r.skills))
+      .catch(() => {});
+    api
       .deployment(id)
       .then((r) => {
         if (r.status && r.status !== 'none') setDeploy({ status: r.status, url: r.url });
@@ -543,11 +552,12 @@ export default function Chat() {
     : '';
 
   const tabItems = useMemo(() => {
-    const items: SegmentedItem<'preview' | 'files' | 'database'>[] = [
+    const items: SegmentedItem<'preview' | 'files' | 'database' | 'skills'>[] = [
       { value: 'preview', label: '预览' },
       { value: 'files', label: '文件' },
     ];
     if (dbAvailable) items.push({ value: 'database', label: '数据库' });
+    items.push({ value: 'skills', label: '技能' });
     return items;
   }, [dbAvailable]);
 
@@ -555,8 +565,15 @@ export default function Chat() {
     e.preventDefault();
     const text = input.trim();
     if (!text || busy) return;
-    sendMessage({ text });
+    // 本轮选中的技能随请求带上：后端把正文作为参考资料附在这条消息上
+    sendMessage({ text }, { body: { skills: pickedSkills } });
     setInput('');
+  }
+
+  function toggleSkill(name: string) {
+    setPickedSkills((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+    );
   }
 
   return (
@@ -772,6 +789,8 @@ export default function Chat() {
               )}
             </div>
           </div>
+        ) : tab === 'skills' ? (
+          <Skills projectId={id as string} embedded />
         ) : tab === 'database' ? (
           <DatabaseView projectId={id as string} />
         ) : (
@@ -918,12 +937,88 @@ export default function Chat() {
 
         <form onSubmit={submit} className="border-border border-t p-3.5">
           <div className="border-border bg-surface focus-within:border-ring rounded-md border p-2.5 transition-colors">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="描述你想创建的应用…"
-              className="placeholder:text-muted-foreground/70 h-7 w-full bg-transparent px-0.5 text-[13px] outline-none"
-            />
+            {pickedSkills.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {pickedSkills.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => toggleSkill(n)}
+                    title="点击移除"
+                    className="border-accent/35 bg-accent-soft text-accent-ink inline-flex items-center gap-1 rounded-xs border px-1.5 py-0.5 text-[11.5px]"
+                  >
+                    技能：{n}
+                    <span aria-hidden>×</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="relative">
+              <input
+                value={input}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setInput(v);
+                  // 输入 "/" 唤起技能选择器
+                  if (v === '/') {
+                    setPickerOpen(true);
+                    setInput('');
+                  }
+                }}
+                onFocus={() => {
+                  if (!input && skills.length) setPickerOpen(false);
+                }}
+                placeholder="描述你想创建的应用…（输入 / 可唤起技能）"
+                className="placeholder:text-muted-foreground/70 h-7 w-full bg-transparent px-0.5 text-[13px] outline-none"
+              />
+              {pickerOpen && (
+                <div className="border-border bg-surface absolute bottom-9 left-0 z-20 max-h-64 w-80 overflow-y-auto rounded-md border shadow-lg">
+                  {skills.length === 0 ? (
+                    <p className="text-muted-foreground px-3 py-3 text-[12px]">
+                      还没有技能。可在左侧「技能」页签里新建。
+                    </p>
+                  ) : (
+                    skills.map((sk) => (
+                      <button
+                        key={sk.id}
+                        type="button"
+                        onClick={() => {
+                          toggleSkill(sk.name);
+                          setPickerOpen(false);
+                        }}
+                        className="hover:bg-muted flex w-full items-start gap-2 px-3 py-2 text-left"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1.5">
+                            <span className="truncate text-[12.5px] font-medium">
+                              {sk.name}
+                            </span>
+                            <span className="text-muted-foreground shrink-0 text-[10.5px]">
+                              {sk.scope === 'project' ? '本项目' : '所有项目'}
+                            </span>
+                          </span>
+                          <span className="text-muted-foreground mt-0.5 line-clamp-1 block text-[11.5px]">
+                            {sk.description}
+                          </span>
+                        </span>
+                        {pickedSkills.includes(sk.name) && (
+                          <span className="text-accent-ink shrink-0 text-[11px]">
+                            已选
+                          </span>
+                        )}
+                      </button>
+                    ))
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPickerOpen(false)}
+                    className="border-border text-muted-foreground hover:text-foreground w-full border-t px-3 py-1.5 text-[11.5px]"
+                  >
+                    关闭
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="mt-2 flex items-center gap-2">
               {balance !== null && (
                 <span className="text-muted-foreground flex items-center gap-1.5 text-[11.5px]">
@@ -935,6 +1030,14 @@ export default function Chat() {
                   积分剩余 <span className="tnum">{balance.toFixed(2)}</span>
                 </span>
               )}
+              <button
+                type="button"
+                onClick={() => setPickerOpen((v) => !v)}
+                className="text-muted-foreground hover:text-foreground hover:bg-muted rounded-xs px-1.5 py-0.5 text-[11.5px] transition-colors"
+                title="选择技能"
+              >
+                技能{pickedSkills.length > 0 ? `（${pickedSkills.length}）` : ''}
+              </button>
               <button
                 type="submit"
                 disabled={busy || !input.trim()}
