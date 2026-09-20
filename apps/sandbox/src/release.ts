@@ -1,4 +1,5 @@
 import { mkdir, rm } from 'node:fs/promises';
+import net from 'node:net';
 import { join } from 'node:path';
 
 import { config, SKIP_DIRS } from './config';
@@ -110,6 +111,9 @@ export async function startRelease(
   await docker([
     'run',
     '-d',
+    // 偶发崩溃（OOM、依赖抖动）后自动拉起；回收走 docker rm -f，不受影响
+    '--restart',
+    'unless-stopped',
     '--name',
     containerName(id),
     `--memory=${config.memory}`,
@@ -152,21 +156,34 @@ export async function stopRelease(id: string) {
   await rm(releaseDir(id), { recursive: true, force: true }).catch(() => {});
 }
 
+/**
+ * 端口可连接即视为就绪。
+ *
+ * 不能假设应用暴露了某个固定接口：早前探测 `GET /api/health` 并要求 200，
+ * 但生成的应用不一定有此路由（只有 /api/ping 时会被判成"永远未就绪"，
+ * 界面因此一直卡在"后端启动中"）。TCP 连接是唯一不依赖应用实现的信号。
+ */
+async function tcpReady(ip: string, port: number, timeoutMs = 2000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host: ip, port });
+    const finish = (ok: boolean) => {
+      sock.destroy();
+      resolve(ok);
+    };
+    sock.setTimeout(timeoutMs);
+    sock.once('connect', () => finish(true));
+    sock.once('timeout', () => finish(false));
+    sock.once('error', () => finish(false));
+  });
+}
+
 /** 就绪探测：容器在跑、拿到了 IP、且容器内后端已能接受连接 */
 export async function releaseReady(
   id: string,
 ): Promise<{ running: boolean; ip: string; ready: boolean }> {
   const st = await releaseStatus(id);
   if (!st.running || !st.ip) return { ...st, ready: false };
-  try {
-    await fetch(`http://${st.ip}:${config.releasePort}/`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(5_000),
-    });
-    return { ...st, ready: true };
-  } catch {
-    return { ...st, ready: false };
-  }
+  return { ...st, ready: await tcpReady(st.ip, config.releasePort) };
 }
 
 // ---- 开发预览用的应用后端 ----
@@ -211,6 +228,9 @@ export async function startDevApp(
   await docker([
     'run',
     '-d',
+    // 偶发崩溃（OOM、依赖抖动）后自动拉起；回收走 docker rm -f，不受影响
+    '--restart',
+    'unless-stopped',
     '--name',
     name,
     `--memory=${config.memory}`,
@@ -253,14 +273,7 @@ export async function devAppReady(
 ): Promise<{ running: boolean; ip: string; ready: boolean }> {
   const ip = await containerIp(devAppContainerName(id));
   if (!ip) return { running: false, ip: '', ready: false };
-  try {
-    const res = await fetch(`http://${ip}:${config.devAppPort}/api/health`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    return { running: true, ip, ready: res.ok };
-  } catch {
-    return { running: true, ip, ready: false };
-  }
+  return { running: true, ip, ready: await tcpReady(ip, config.devAppPort) };
 }
 
 /** 开发应用后端地址（供反代） */

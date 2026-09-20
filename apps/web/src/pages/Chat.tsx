@@ -413,6 +413,8 @@ export default function Chat() {
     lastInputTokens: number | null;
   } | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
+  /** 开发预览后端的状态：none=该项目无后端，starting=启动中，ready=就绪 */
+  const [backend, setBackend] = useState<'none' | 'starting' | 'ready'>('none');
   const [stepsDraft, setStepsDraft] = useState('');
   const [stepsSaving, setStepsSaving] = useState(false);
   const [stepsNotice, setStepsNotice] = useState('');
@@ -510,6 +512,58 @@ export default function Chat() {
     setUserAdjusted(false);
     setRatio(0);
   }
+
+  // 打开项目时确保开发预览后端在跑：
+  // 沙箱/后端容器会被空闲回收，若只等"生成完成"才启动，用户重新打开项目就会一直 503。
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let tries = 0;
+    const stopPolling = () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    };
+    const poll = () => {
+      timer = setInterval(async () => {
+        tries += 1;
+        const s = await api.devAppStatus(id).catch(() => null);
+        if (cancelled) return;
+        if (s?.ready) {
+          stopPolling();
+          setBackend('ready');
+          // 让 iframe 重新加载：应用自己会重试 /api
+          setPreviewVersion((v) => v + 1);
+        } else if (tries >= 40) {
+          stopPolling(); // 约 2 分钟仍没起来就停止轮询，保留提示
+        }
+      }, 3000);
+    };
+    void (async () => {
+      try {
+        // 幂等：已在运行会立刻返回
+        const r = await api.startDevApp(id);
+        if (cancelled) return;
+        if (!r.hasBackend) {
+          setBackend('none');
+          return;
+        }
+        if (r.ready) {
+          setBackend('ready');
+          return;
+        }
+        setBackend('starting');
+        poll();
+      } catch {
+        if (!cancelled) setBackend('none');
+      }
+    })();
+    return () => {
+      cancelled = true;
+      stopPolling();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   // 生成过程中轮询构建产物版本，一旦变化就刷新预览（实时化）
   useEffect(() => {
@@ -997,6 +1051,16 @@ export default function Chat() {
                   </svg>
                 </a>
               </div>
+              {backend === 'starting' && (
+                <div className="border-border bg-warn/8 text-muted-foreground flex shrink-0 items-center gap-2 border-b px-3 py-1 text-[11.5px]">
+                  <span
+                    className="size-1.5 shrink-0 animate-pulse rounded-full"
+                    style={{ background: 'var(--warn)' }}
+                    aria-hidden
+                  />
+                  后端启动中…（首次需要装依赖，约 10~30 秒，就绪后会自动刷新）
+                </div>
+              )}
               {previewSrc && hasBuild ? (
                 <iframe
                   key={previewVersion}

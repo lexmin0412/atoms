@@ -250,6 +250,8 @@ export const api = {
     req<{ hasBackend: boolean; ready: boolean }>(`/api/projects/${id}/devapp`, {
       method: 'POST',
     }),
+  devAppStatus: (id: string) =>
+    req<{ ready: boolean }>(`/api/projects/${id}/devapp/status`),
   publish: (id: string) =>
     req<{ status: string; url: string; firstTime?: boolean }>(
       `/api/projects/${id}/publish`,
