@@ -243,6 +243,18 @@ function renderPart(part: Part, i: number, animating: boolean) {
   if (part.type === 'reasoning' && part.text) {
     return <Reasoning key={i} text={part.text} streaming={animating} />;
   }
+  if (part.type === 'data-context' && part.data) {
+    const d = part.data as { coveredCount?: number };
+    return (
+      <div
+        key={i}
+        className="border-border bg-muted/40 text-muted-foreground my-1.5 inline-flex items-center gap-1.5 rounded-sm border px-2 py-1 text-[11.5px]"
+      >
+        <IconSparkle size={11} />
+        已自动压缩早期对话（前 {d.coveredCount ?? 0} 条归纳为摘要）；完整历史仍保留在下方
+      </div>
+    );
+  }
   const isTool = part.type === 'dynamic-tool' || part.type.startsWith('tool-');
   if (isTool) {
     const name =
@@ -395,6 +407,10 @@ export default function Chat() {
     model: string;
     contextLimit: number;
     contextLimitKnown: boolean;
+    contextSoftLimit: number;
+    compressAt: number;
+    compressedCount: number;
+    lastInputTokens: number | null;
   } | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const [stepsDraft, setStepsDraft] = useState('');
@@ -709,7 +725,7 @@ export default function Chat() {
     () => estimateTokens(messages as unknown as { parts?: unknown[] }[]),
     [messages],
   );
-  const ctxUsed = Math.max(actualTokens ?? 0, liveTokens);
+  const ctxUsed = Math.max(actualTokens ?? agent?.lastInputTokens ?? 0, liveTokens);
   const ctxLimit = agent?.contextLimit ?? 0;
   const ctxPct = ctxLimit > 0 ? Math.min(100, Math.round((ctxUsed / ctxLimit) * 100)) : 0;
   const ctxTone =

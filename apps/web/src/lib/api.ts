@@ -156,6 +156,14 @@ export const api = {
       model: string;
       contextLimit: number;
       contextLimitKnown: boolean;
+      /** 上下文软上限（平台实际预算，通常远小于模型窗口） */
+      contextSoftLimit: number;
+      /** 达到该值触发历史归纳压缩 */
+      compressAt: number;
+      /** 已压缩（归纳为摘要）的历史条数 */
+      compressedCount: number;
+      /** 上一轮真实输入 token（页面刷新后也能显示准确值） */
+      lastInputTokens: number | null;
     }>(`/api/projects/${id}/agent`),
   updateProjectAgent: (id: string, maxSteps: number) =>
     req<{ maxSteps: number }>(`/api/projects/${id}/agent`, {

@@ -29,6 +29,11 @@ export const config = {
   },
   /** 应用域名（发布 <id>.<APP_DOMAIN>、预览 dev-<id>.<APP_DOMAIN>）；未配置则不返回绝对 URL */
   appsDomain: process.env.APPS_DOMAIN ?? '',
+  /**
+   * 上下文软上限（token）。模型窗口可以很大（1M），但上游在 ~200k 附近就容易断流，
+   * 因此用它作为实际预算：超过 80% 触发历史归纳压缩。
+   */
+  contextSoftLimit: Number(process.env.CONTEXT_SOFT_LIMIT ?? 200_000),
   /** credits：每自然月补满到该额度（1 积分 = $0.01） */
   creditsMonthlyGrant: Number(process.env.CREDITS_MONTHLY_GRANT ?? 500),
   /** 已发布应用后端在容器内监听的端口（与沙箱侧约定一致） */

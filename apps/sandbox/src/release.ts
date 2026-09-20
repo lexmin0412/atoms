@@ -137,7 +137,9 @@ export async function startRelease(
     config.image,
     'sh',
     '-lc',
-    'pnpm install --prefer-offline && pnpm --filter ./apps/api start',
+    // CI=true 只作用于 install：pnpm 在无 TTY 时若判定 node_modules 需要重建，
+    // 会直接 abort（ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY）导致应用起不来。
+    'CI=true pnpm install --prefer-offline && pnpm --filter ./apps/api start',
   ]);
 
   // 容器内先 install 再 start，首次需要一点时间
@@ -236,7 +238,8 @@ export async function startDevApp(
     config.image,
     'sh',
     '-lc',
-    'pnpm install --prefer-offline && pnpm --filter ./apps/api start',
+    // 同上：发布容器首次安装也可能遇到「无 TTY 判定需要重建 node_modules」而 abort
+    'CI=true pnpm install --prefer-offline && pnpm --filter ./apps/api start',
   ]);
 }
 

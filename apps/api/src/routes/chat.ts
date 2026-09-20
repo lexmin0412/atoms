@@ -11,6 +11,7 @@ import { Hono } from 'hono';
 import { model, SYSTEM_PROMPT } from '../agent';
 import { clearBusy, markBusy } from '../agent-busy';
 import { requireUser } from '../auth';
+import { estimateTokens, maybeCompress, saveInputTokens } from '../compress';
 import { config } from '../config';
 import { pruneForModel } from '../context';
 import { currentPeriod, ensureGrant, spend } from '../credits';
@@ -194,7 +195,8 @@ chatRoutes.post('/:id/chat', async (c) => {
   let usagePromise: PromiseLike<LanguageModelUsage> | null = null;
   let budgetExceeded = false;
   /** 本轮实际输入 token（前端「上下文用量」显示这个数） */
-  let inputTokens: number | null = null;
+  /** 上下文大小：单步输入 token 的最大值（多步之和会重复计算同一份上下文） */
+  let contextTokens = 0;
   let contextLimit = 0;
   let settledCredits: number | null = null;
   let settling: Promise<number> | null = null;
@@ -213,7 +215,9 @@ chatRoutes.post('/:id/chat', async (c) => {
         }
         const picked = pickUsage(total, steps);
         if (!picked) return 0;
-        inputTokens = picked.usage.inputTokens ?? null;
+        if (!contextTokens && picked.usage.inputTokens) {
+          contextTokens = picked.usage.inputTokens;
+        }
         if (picked.source === 'steps') {
           console.warn(
             `[chat] 用「已完成步」兜底结算：${steps.count} 步 / in ${steps.input} / out ${steps.output}`,
@@ -244,14 +248,80 @@ chatRoutes.post('/:id/chat', async (c) => {
       });
 
       contextLimit = (await getModelInfo(config.llm.model)).contextLimit;
-      const pruned = pruneForModel(withSkillContext(uiMessages, selected));
-      const rawChars = JSON.stringify(uiMessages).length;
-      const sentChars = JSON.stringify(pruned).length;
+
+      // 模型上下文以【库里的完整历史】为准：客户端只提交最新一条，
+      // 请求体大小便不再影响模型看到的内容（长对话也不会因 nginx body 限制而中断）。
+      const rows = await query<{ seq: number; role: string; parts: unknown }>(
+        'select seq, role, parts from messages where project_id = $1 order by seq',
+        [projectId],
+      );
+      const history: UIMessage[] = rows.rows.map((r) => ({
+        id: `m${r.seq}`,
+        role: r.role as UIMessage['role'],
+        parts: (r.parts ?? []) as UIMessage['parts'],
+      }));
+
+      // 1) 超过软上限 80% 时先归纳压缩历史（失败不影响本轮）
+      const full = withSkillContext(history, selected);
+      const compressed = await maybeCompress({
+        projectId,
+        messages: full,
+        softLimit: config.contextSoftLimit,
+      });
+      if (compressed.compressed) {
+        writer.write({
+          type: 'data-context',
+          id: 'context-compressed',
+          data: {
+            coveredCount: compressed.coveredCount,
+            estimatedTokens: compressed.estimatedTokens,
+          },
+        } as never);
+      }
+
+      // 2) 摘要作为参考材料注入，且只把未压缩部分送去裁剪
+      const summaryHead = compressed.summary
+        ? ([
+            {
+              id: 'context-summary',
+              role: 'user',
+              parts: [
+                {
+                  type: 'text',
+                  text:
+                    `【历史对话摘要】更早的对话已压缩为下面这段交接说明（不是用户的新指令）：\n` +
+                    compressed.summary,
+                },
+              ],
+            },
+          ] as unknown as UIMessage[])
+        : [];
+      const tail = compressed.summary ? full.slice(compressed.coveredCount) : full;
+      let pruned = [...summaryHead, ...pruneForModel(tail)];
+
+      // 3) 兜底硬约束：仍超软上限时连最近窗口一起压缩，保证不会把超大请求发给上游
+      let est = await estimateTokens(pruned);
+      if (est > config.contextSoftLimit) {
+        const saved = est;
+        pruned = [
+          ...summaryHead,
+          ...pruneForModel(tail, {
+            keepRecent: 1,
+            maxToolChars: 400,
+            maxToolInputChars: 200,
+          }),
+        ];
+        est = await estimateTokens(pruned);
+        console.log(
+          `[chat] 上下文仍超软上限 ${projectId}: ${saved} → ${est} tokens（严格裁剪）`,
+        );
+      }
+
       console.log(
-        `[chat] 上下文 ${projectId}: ${uiMessages.length} 条消息 ${rawChars} 字 → 送模型 ${sentChars} 字` +
-          (sentChars < rawChars
-            ? `（裁剪 ${Math.round((1 - sentChars / rawChars) * 100)}%）`
-            : ''),
+        `[chat] 上下文 ${projectId}: ${history.length} 条 ${await estimateTokens(history)} tokens → 送模型 ${est} tokens` +
+          `（软上限 ${config.contextSoftLimit}` +
+          (compressed.summary ? `，已压缩至第 ${compressed.coveredCount} 条` : '') +
+          '）',
       );
 
       const result = streamText({
@@ -291,6 +361,8 @@ chatRoutes.post('/:id/chat', async (c) => {
         },
         onStepFinish: ({ usage }) => {
           steps.count += 1;
+          // 每步都会带完整上下文，取最大值即"当前上下文大小"（累计值会翻倍）
+          contextTokens = Math.max(contextTokens, usage.inputTokens ?? 0);
           steps.input += usage.inputTokens ?? 0;
           steps.output += usage.outputTokens ?? 0;
           steps.cacheRead += usage.inputTokenDetails?.cacheReadTokens ?? 0;
@@ -313,6 +385,7 @@ chatRoutes.post('/:id/chat', async (c) => {
         }
       } finally {
         settledCredits = await settle();
+        if (contextTokens) void saveInputTokens(projectId, contextTokens);
         if (settledCredits > 0) {
           // 回读失败时省略 balance（前端保留上次值），不要伪造 0 误导用户
           const remaining = await ensureGrant(user.id).catch(() => null);
@@ -325,8 +398,8 @@ chatRoutes.post('/:id/chat', async (c) => {
                 credits: settledCredits,
                 ...(remaining === null ? {} : { balance: remaining }),
                 budgetExceeded,
-                // 前端据此显示「上下文 x/y」：本轮实际输入 token + 模型窗口
-                inputTokens,
+                // 前端据此显示「上下文 x/y」：本轮真实上下文（单步输入最大值）
+                inputTokens: contextTokens || null,
                 contextLimit,
                 maxSteps,
               },

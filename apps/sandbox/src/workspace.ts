@@ -55,6 +55,10 @@ export async function ensureSandbox(id: string, databaseUrl?: string) {
   // 指到共享卷后既能装、又能跨容器重建保留（默认 registry 已是内网镜像）。
   const containerPrefix = join(STORE_MOUNT, 'npm-global');
   const envArgs = [
+    // 非交互：避免 pnpm 在无 TTY 时因「需要确认清空 node_modules」直接 abort
+    // （ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY，会让依赖装不上、应用起不来）
+    '-e',
+    'CI=true',
     '-e',
     `NPM_CONFIG_PREFIX=${containerPrefix}`,
     // 注意：dash 作为 login shell 会重置 PATH，所以镜像里另有 /etc/profile.d 兜底
@@ -85,8 +89,13 @@ export async function ensureSandbox(id: string, databaseUrl?: string) {
     '-w',
     '/workspace',
     config.image,
-    'sleep',
-    'infinity',
+    'sh',
+    '-lc',
+    // 注：设了 NPM_CONFIG_PREFIX 后，pnpm 会去 $PREFIX/etc/npmrc 找【全局配置】，
+    // 那里没有就会退回内置默认（registry.npmjs.org + 默认 store）——
+    // 既慢（国内拉 npmjs）又与 devapp 的 store 不一致，导致 node_modules 被判不兼容。
+    // 启动时把镜像里的全局 npmrc 镜像过去，保证两边配置一致。
+    `mkdir -p ${containerPrefix}/etc && cp -f /usr/local/etc/npmrc ${containerPrefix}/etc/npmrc 2>/dev/null; exec sleep infinity`,
   ]);
 }
 

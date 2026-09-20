@@ -106,6 +106,20 @@ ssh ... ubuntu@<B_HOST> 'cd <B_REPO> && docker build -t atoms-sandbox:latest doc
     `db:init` 会把存量表/序列 `alter ... owner to` 给项目角色；转移要求能 `SET ROLE`，
     故 provisioning 里显式 `grant <role> to <admin> with set true`（PG16 历史成员关系默认无 SET）。
     `atoms_ro` 由**项目角色自己的短连接**授权（只有 owner 能授）。schema 本身仍归管理角色。
+21l. **`NPM_CONFIG_PREFIX` 会改变 pnpm 找【全局 npmrc】的位置**：pnpm 按 `$PREFIX/etc/npmrc` 读全局配置，
+    把 prefix 指到共享卷后，镜像里的 `/usr/local/etc/npmrc`（registry 镜像源 + store-dir）**就失效了**——
+    沙箱里会退回 `registry.npmjs.org`（国内极慢）和默认 store，且与 devapp 的 store 不一致，
+    导致 pnpm 判定 node_modules 需要重建。规避：容器启动时把 npmrc 镜像到 `$PREFIX/etc/npmrc`
+    （见 `apps/sandbox/src/workspace.ts` 的启动命令）。
+21m. **无 TTY 时 pnpm 不能确认清空 node_modules**：会报
+    `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` 直接退出（devapp/发布容器因此起不来、报 503）。
+    解决：容器 `-e CI=true`，且 devapp/发布容器的安装命令写成 `CI=true pnpm install ...`
+    （只作用于 install，不影响应用启动）。
+21j. **nginx 必须放开请求体上限**：前端每轮会带上完整对话历史，长对话请求体可达数 MB，
+    默认 `client_max_body_size 1m` 会直接 413（表现为"聊到一半突然发不出去"）。
+    站点配置里 `/api/` 已设 `client_max_body_size 32m`，改完 `nginx -t && systemctl reload nginx`。
+21k. **api 新增依赖后要在 A 上 `pnpm install`**（如 `gpt-tokenizer`），否则运行期 import 失败；
+    代码里对 tokenizer 做了懒加载 + 启发式兜底，但仍应正常安装。
 21h. **沙箱并发上限与按需回收**：默认 `SANDBOX_MAX=4`（2C4G、每容器 1G）。池满时沙箱服务会
     **回收最久空闲的容器**（只删容器、保留工作区目录，源码不丢），仍不够才 429。
     排查「用户提示模型服务不可用」时先看 A 的 `atoms-api-error.log` 有无

@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { isBusy } from '../agent-busy';
 import { requireUser } from '../auth';
+import { COMPRESS_RATIO } from '../compress';
 import { config } from '../config';
 import { getModelInfo } from '../credits/pricing';
 import { query } from '../db';
@@ -87,8 +88,12 @@ const DEFAULT_MAX_STEPS = 30;
 projectRoutes.get('/:id/agent', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
-  const r = await query<{ max_steps: number }>(
-    'select max_steps from projects where id = $1 and user_id = $2',
+  const r = await query<{
+    max_steps: number;
+    context_summary_count: number;
+    last_input_tokens: number | null;
+  }>(
+    'select max_steps, context_summary_count, last_input_tokens from projects where id = $1 and user_id = $2',
     [id, user.id],
   );
   if (!r.rowCount)
@@ -102,6 +107,11 @@ projectRoutes.get('/:id/agent', async (c) => {
     model: config.llm.model,
     contextLimit: info.contextLimit,
     contextLimitKnown: info.known,
+    // 上下文压缩：软上限 / 触发阈值 / 已压缩条数 / 上轮真实输入
+    contextSoftLimit: config.contextSoftLimit,
+    compressAt: Math.round(config.contextSoftLimit * COMPRESS_RATIO),
+    compressedCount: r.rows[0].context_summary_count,
+    lastInputTokens: r.rows[0].last_input_tokens,
   });
 });
 

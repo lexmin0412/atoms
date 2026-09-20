@@ -23,9 +23,24 @@ const MAX_TOOL_INPUT_CHARS = 600;
 
 type LoosePart = { type?: string; output?: unknown } & Record<string, unknown>;
 
-export function pruneForModel(messages: UIMessage[]): UIMessage[] {
-  if (messages.length <= KEEP_RECENT) return messages;
-  const cut = messages.length - KEEP_RECENT;
+export interface PruneOptions {
+  /** 末尾原样保留几条 */
+  keepRecent?: number;
+  /** 历史里工具【输出】保留长度 */
+  maxToolChars?: number;
+  /** 历史里工具【入参】保留长度 */
+  maxToolInputChars?: number;
+}
+
+export function pruneForModel(
+  messages: UIMessage[],
+  options: PruneOptions = {},
+): UIMessage[] {
+  const keepRecent = options.keepRecent ?? KEEP_RECENT;
+  const maxToolChars = options.maxToolChars ?? MAX_TOOL_CHARS;
+  const maxToolInputChars = options.maxToolInputChars ?? MAX_TOOL_INPUT_CHARS;
+  if (messages.length <= keepRecent) return messages;
+  const cut = messages.length - keepRecent;
   return messages.map((m, i) => {
     if (i >= cut) return m;
     // 没改动就保留原对象（引用不变，便于判断"这条被裁过吗"）
@@ -44,13 +59,13 @@ export function pruneForModel(messages: UIMessage[]): UIMessage[] {
       if (!isTool) return [p];
 
       const clip = (v: unknown) =>
-        typeof v === 'string' && v.length > MAX_TOOL_CHARS
-          ? `${v.slice(0, MAX_TOOL_CHARS)}\n…（历史输出已截断）`
+        typeof v === 'string' && v.length > maxToolChars
+          ? `${v.slice(0, maxToolChars)}\n…（历史输出已截断）`
           : v;
 
       const clipInput = (v: unknown) =>
-        typeof v === 'string' && v.length > MAX_TOOL_INPUT_CHARS
-          ? `${v.slice(0, MAX_TOOL_INPUT_CHARS)}…（历史入参已截断）`
+        typeof v === 'string' && v.length > maxToolInputChars
+          ? `${v.slice(0, maxToolInputChars)}…（历史入参已截断）`
           : v;
       const shrink = (
         obj: unknown,
