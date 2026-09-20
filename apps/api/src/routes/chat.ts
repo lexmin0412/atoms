@@ -20,7 +20,7 @@ import { logErr } from '../redact';
 import { fail } from '../respond';
 import { getRuntime } from '../runtime';
 import { acquireWorkspace, snapshotProject } from '../runtime/manager';
-import { resolveSkills, skillsBrief, type SkillRow } from '../skills';
+import { resolveSkills, skillsBrief, type ResolvedSkill } from '../skills';
 import { createTools } from '../tools';
 import type { Env } from './auth';
 
@@ -57,7 +57,7 @@ async function saveMessage(
  * 把用户显式选中的技能正文作为「参考资料」附在本轮用户消息上。
  * 刻意不拼进 system：正文是资料，不是系统指令（降低「技能正文改行为」的风险）。
  */
-function withSkillContext(messages: UIMessage[], skills: SkillRow[]): UIMessage[] {
+function withSkillContext(messages: UIMessage[], skills: ResolvedSkill[]): UIMessage[] {
   if (!skills.length) return messages;
   let idx = -1;
   for (let i = messages.length - 1; i >= 0; i -= 1) {

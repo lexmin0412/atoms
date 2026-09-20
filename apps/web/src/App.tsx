@@ -8,7 +8,9 @@ import Chat from './pages/Chat';
 import Credits from './pages/Credits';
 import Login from './pages/Login';
 import Projects from './pages/Projects';
+import SkillEdit from './pages/SkillEdit';
 import Skills from './pages/Skills';
+import SkillView from './pages/SkillView';
 
 function Shell({ user, onLogout }: { user: UserDto; onLogout: () => void }) {
   const { pathname } = useLocation();
@@ -91,7 +93,11 @@ export default function App() {
         <Route path="/" element={<Projects />} />
         <Route path="/p/:id" element={<Chat />} />
         <Route path="/credits" element={<Credits />} />
+        {/* 技能列表 → 新增/查看/编辑各自独立成页 */}
         <Route path="/skills" element={<Skills />} />
+        <Route path="/skills/new" element={<SkillEdit />} />
+        <Route path="/skills/:id" element={<SkillView />} />
+        <Route path="/skills/:id/edit" element={<SkillEdit />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

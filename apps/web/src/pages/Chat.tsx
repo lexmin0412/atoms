@@ -1059,7 +1059,11 @@ export default function Chat() {
                               {sk.name}
                             </span>
                             <span className="text-muted-foreground shrink-0 text-[10.5px]">
-                              {sk.scope === 'project' ? '本项目' : '所有项目'}
+                              {sk.builtin
+                                ? '内置'
+                                : sk.scope === 'project'
+                                  ? '本项目'
+                                  : '所有项目'}
                             </span>
                           </span>
                           <span

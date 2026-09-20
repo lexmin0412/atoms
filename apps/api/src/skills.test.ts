@@ -8,6 +8,13 @@ import {
   toDto,
   type SkillRow,
 } from './skills';
+import {
+  BUILTIN_SKILLS,
+  builtinByName,
+  builtinId,
+  builtinNames,
+  isBuiltinId,
+} from './skills/builtin';
 
 /** 取抛出错误（避免在 catch 里写 expect，触发 no-conditional-expect） */
 function caught(fn: () => unknown): SkillError {
@@ -94,5 +101,37 @@ describe('skills.toDto', () => {
 describe('限额常量', () => {
   it('每用户 20 个', () => {
     expect(MAX_SKILLS_PER_USER).toBe(20);
+  });
+});
+
+describe('内置技能', () => {
+  it('frontend-design 已随代码加载（含名称/适用场景/正文）', () => {
+    const s = BUILTIN_SKILLS.find((b) => b.key === 'frontend-design');
+    expect(s).toBeTruthy();
+    expect(s?.name).toBe('frontend-design');
+    expect(s?.description.length).toBeGreaterThan(10);
+    expect(s?.body.length ?? 0).toBeGreaterThan(500);
+  });
+
+  it('id 用 builtin: 前缀，便于识别与拒绝写入', () => {
+    expect(builtinId('frontend-design')).toBe('builtin:frontend-design');
+    expect(isBuiltinId('builtin:frontend-design')).toBe(true);
+    expect(isBuiltinId('3f2a1c9e-0000-0000-0000-000000000000')).toBe(false);
+  });
+
+  it('按名字查内置（不区分大小写）', () => {
+    expect(builtinByName('Frontend-Design')?.key).toBe('frontend-design');
+    expect(builtinByName('  frontend-design ')).toBeTruthy();
+    expect(builtinByName('不存在的技能')).toBeNull();
+  });
+
+  it('内置名字被占用（用户不得重名）', () => {
+    expect(builtinNames()).toContain('frontend-design');
+  });
+
+  it('正文里的 frontmatter 已被剥离，且不含对其它产品的自称', () => {
+    const s = BUILTIN_SKILLS[0];
+    expect(s.body.startsWith('---')).toBe(false);
+    expect(s.body).not.toContain('Claude');
   });
 });

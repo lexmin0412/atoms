@@ -75,6 +75,8 @@ export interface CreditSummary {
 /** 用户自定义技能（知识型：正文作为参考资料注入，不作为系统指令） */
 export interface SkillDto {
   id: string;
+  /** 内置技能：随产品发行，不可修改/删除 */
+  builtin: boolean;
   name: string;
   description: string;
   body: string;
@@ -198,6 +200,8 @@ export const api = {
       limit: number;
       limits: { name: number; description: number; body: number };
     }>(`/api/skills${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
+  skill: (id: string) =>
+    req<{ skill: SkillDto }>(`/api/skills/${encodeURIComponent(id)}`),
   createSkill: (d: SkillInput & { projectId?: string | null }) =>
     req<{ skill: SkillDto }>('/api/skills', {
       method: 'POST',

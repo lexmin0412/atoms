@@ -1,5 +1,12 @@
 import { query } from './db';
 import { secretFindings } from './redact';
+import {
+  BUILTIN_SKILLS,
+  builtinByName,
+  builtinId,
+  builtinNames,
+  isBuiltinId,
+} from './skills/builtin';
 
 /**
  * Skills 领域模块：用户自定义技能（知识型）。
@@ -10,7 +17,7 @@ import { secretFindings } from './redact';
  * - 不限制正文里出现凭据（用户自担），但保存时扫描并打标识提示
  */
 
-/** 每个用户的自定义技能总数上限（含用户级 + 项目级） */
+/** 每个用户的自定义技能总数上限（含用户级 + 项目级；内置技能不占额度） */
 export const MAX_SKILLS_PER_USER = 20;
 export const MAX_BODY_LEN = 20_000;
 export const MAX_NAME_LEN = 60;
@@ -30,7 +37,10 @@ export interface SkillRow {
 
 /** 列表 / 详情用的对外结构 */
 export interface SkillDto {
+  /** 内置技能为 `builtin:<key>`，用户技能为 uuid */
   id: string;
+  /** 内置：随产品发行，不可修改/删除，始终排在用户技能之前 */
+  builtin: boolean;
   name: string;
   description: string;
   body: string;
@@ -41,9 +51,42 @@ export interface SkillDto {
   updatedAt: string;
 }
 
+function builtinToDto(s: (typeof BUILTIN_SKILLS)[number]): SkillDto {
+  return {
+    id: builtinId(s.key),
+    builtin: true,
+    name: s.name,
+    description: s.description,
+    body: s.body,
+    secretFlags: [],
+    scope: 'user',
+    projectId: null,
+    updatedAt: '',
+  };
+}
+
+/** 合法 uuid 才查库：否则 pg 会因类型不匹配抛错（曾表现为 500） */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 单个技能（内置按 key 解析） */
+export async function getSkillById(userId: string, id: string): Promise<SkillDto | null> {
+  if (isBuiltinId(id)) {
+    const key = id.slice('builtin:'.length);
+    const hit = BUILTIN_SKILLS.find((b) => b.key === key);
+    return hit ? builtinToDto(hit) : null;
+  }
+  if (!UUID_RE.test(id)) return null;
+  const r = await query<SkillRow>('select * from skills where id = $1 and user_id = $2', [
+    id,
+    userId,
+  ]);
+  return r.rows[0] ? toDto(r.rows[0]) : null;
+}
+
 export function toDto(row: SkillRow): SkillDto {
   return {
     id: row.id,
+    builtin: false,
     name: row.name,
     description: row.description,
     body: row.body,
@@ -139,7 +182,8 @@ export async function listSkills(
       order by project_id nulls first, lower(name)`,
     [userId, projectId ?? null],
   );
-  return r.rows.map(toDto);
+  // 内置技能永远排在最前
+  return [...BUILTIN_SKILLS.map(builtinToDto), ...r.rows.map(toDto)];
 }
 
 export async function createSkill(
@@ -156,6 +200,9 @@ export async function createSkill(
     );
   }
   const v = normalizeInput(input);
+  if (builtinNames().some((n) => n.toLowerCase() === v.name.toLowerCase())) {
+    throw new SkillError('exists', `「${v.name}」是内置技能名，请换一个名称`, 409);
+  }
   try {
     const r = await query<SkillRow>(
       `insert into skills (user_id, project_id, name, description, body, secret_flags)
@@ -177,7 +224,14 @@ export async function updateSkill(
   id: string,
   input: SkillInput,
 ): Promise<SkillDto> {
+  if (isBuiltinId(id)) {
+    throw new SkillError('builtin_readonly', '内置技能不能修改', 403);
+  }
+  if (!UUID_RE.test(id)) throw new SkillError('not_found', '技能不存在', 404);
   const v = normalizeInput(input);
+  if (builtinNames().some((n) => n.toLowerCase() === v.name.toLowerCase())) {
+    throw new SkillError('exists', `「${v.name}」是内置技能名，请换一个名称`, 409);
+  }
   try {
     const r = await query<SkillRow>(
       `update skills
@@ -198,6 +252,10 @@ export async function updateSkill(
 }
 
 export async function deleteSkill(userId: string, id: string): Promise<void> {
+  if (isBuiltinId(id)) {
+    throw new SkillError('builtin_readonly', '内置技能不能删除', 403);
+  }
+  if (!UUID_RE.test(id)) throw new SkillError('not_found', '技能不存在', 404);
   const r = await query('delete from skills where id = $1 and user_id = $2', [
     id,
     userId,
@@ -209,24 +267,39 @@ export async function deleteSkill(userId: string, id: string): Promise<void> {
  * 按名字解析本轮要用的技能（校验归属），返回可用于注入的正文。
  * 同名时项目级覆盖用户级。
  */
+export interface ResolvedSkill {
+  id: string;
+  name: string;
+  body: string;
+}
+
+/** 按名字解析本轮要用的技能（内置 + 校验归属），返回可用于注入的正文 */
 export async function resolveSkills(
   userId: string,
   projectId: string,
   names: string[],
-): Promise<SkillRow[]> {
+): Promise<ResolvedSkill[]> {
   if (!names.length) return [];
   const r = await query<SkillRow>(
+    // 先用户级、后项目级 → 同名时项目级覆盖用户级
     `select * from skills
-      where user_id = $1 and (project_id is null or project_id = $2)`,
+      where user_id = $1 and (project_id is null or project_id = $2)
+      order by project_id nulls first`,
     [userId, projectId],
   );
-  const byName = new Map<string, SkillRow>();
+  const byName = new Map<string, ResolvedSkill>();
   for (const row of r.rows) {
-    const key = row.name.toLowerCase();
-    const prev = byName.get(key);
-    if (!prev || (row.project_id && !prev.project_id)) byName.set(key, row);
+    byName.set(row.name.toLowerCase(), { id: row.id, name: row.name, body: row.body });
   }
-  const out: SkillRow[] = [];
+  // 内置优先级最高（且不可被用户技能顶掉）
+  for (const b of BUILTIN_SKILLS) {
+    byName.set(b.name.toLowerCase(), {
+      id: builtinId(b.key),
+      name: b.name,
+      body: b.body,
+    });
+  }
+  const out: ResolvedSkill[] = [];
   for (const n of names) {
     const hit = byName.get(n.trim().toLowerCase());
     if (hit) out.push(hit);
@@ -234,13 +307,22 @@ export async function resolveSkills(
   return out;
 }
 
-/** 供 list_skills 工具用：只要元信息（名字 + 适用场景），不塞正文 */
+/**
+ * 供 list_skills 工具 / System Prompt 用：只要元信息（名字 + 适用场景），不塞正文。
+ * 内置技能排在最前。
+ */
 export async function skillsBrief(
   userId: string,
   projectId: string,
-): Promise<{ name: string; description: string; scope: 'user' | 'project' }[]> {
+): Promise<
+  { name: string; description: string; scope: 'user' | 'project' | 'builtin' }[]
+> {
   const list = await listSkills(userId, projectId);
-  return list.map((s) => ({ name: s.name, description: s.description, scope: s.scope }));
+  return list.map((s) => ({
+    name: s.name,
+    description: s.description,
+    scope: s.builtin ? ('builtin' as const) : s.scope,
+  }));
 }
 
 /** 供 read_skill 工具用：取单个技能正文 */
@@ -249,7 +331,9 @@ export async function skillBody(
   projectId: string,
   name: string,
 ): Promise<{ name: string; body: string } | null> {
+  const hit = builtinByName(name);
+  if (hit) return { name: hit.name, body: hit.body };
   const rows = await resolveSkills(userId, projectId, [name]);
-  const hit = rows[0];
-  return hit ? { name: hit.name, body: hit.body } : null;
+  const row = rows[0];
+  return row ? { name: row.name, body: row.body } : null;
 }

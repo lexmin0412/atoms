@@ -7,6 +7,7 @@ import { fail } from '../respond';
 import {
   createSkill,
   deleteSkill,
+  getSkillById,
   listSkills,
   MAX_BODY_LEN,
   MAX_DESC_LEN,
@@ -15,6 +16,7 @@ import {
   SkillError,
   updateSkill,
 } from '../skills';
+import { isBuiltinId } from '../skills/builtin';
 import type { Env } from './auth';
 
 export const skillRoutes = new Hono<Env>();
@@ -82,6 +84,19 @@ skillRoutes.get('/', async (c) => {
   }
 });
 
+/** 单个技能（查看页/编辑页用；内置按 builtin:<key> 解析） */
+skillRoutes.get('/:id', async (c) => {
+  const user = c.get('user');
+  try {
+    const skill = await getSkillById(user.id, c.req.param('id'));
+    if (!skill)
+      return c.json({ error: 'not_found', message: '技能不存在或无权访问' }, 404);
+    return c.json({ skill });
+  } catch (err) {
+    return skillFail(c, err);
+  }
+});
+
 /** 新建：projectId 为空 = 用户级 */
 skillRoutes.post('/', async (c) => {
   const user = c.get('user');
@@ -106,12 +121,17 @@ skillRoutes.post('/', async (c) => {
 
 skillRoutes.put('/:id', async (c) => {
   const user = c.get('user');
+  const id = c.req.param('id');
+  // 先判只读：内置技能不管传什么，原因都是「不能修改」
+  if (isBuiltinId(id)) {
+    return c.json({ error: 'builtin_readonly', message: '内置技能不能修改' }, 403);
+  }
   const parsed = parseInput(await c.req.json().catch(() => ({})));
   if (!parsed.ok) {
     return c.json({ error: 'invalid_input', message: parsed.message }, 400);
   }
   try {
-    const skill = await updateSkill(user.id, c.req.param('id'), parsed.data);
+    const skill = await updateSkill(user.id, id, parsed.data);
     return c.json({ skill });
   } catch (err) {
     return skillFail(c, err);

@@ -236,7 +236,10 @@ PUT/DELETE /api/skills/:id           改 / 删
 ```
 
 **Skills（迭代 008）**：用户把规范/playbook 写成技能，Agent 按需参考。
-- 归属两级：`project_id` 为 null = 用户级（跨项目），否则项目级；每用户上限 20 个。
+- **内置技能**：随代码发行（`apps/api/src/skills/builtin/*.md`），所有用户默认可见、不可修改/删除，
+  且在列表与 System Prompt 的「可用技能」清单里**始终排最前**；名字被保留（用户不得重名）。
+  对外 id 为 `builtin:<key>`。当前内置：`frontend-design`。
+- 归属两级：`project_id` 为 null = 用户级（跨项目），否则项目级；每用户自定义上限 20 个（内置不占额度）。
 - 唤起两条路：聊天输入框 `/` 显式选择（本轮生效），或 Agent 用 `list_skills` / `read_skill` 自动命中。
 - 注入：**显式选中的正文作为「参考资料」附在本轮用户消息上**（不是系统指令，降低正文改行为的风险）；
   自动命中只常驻「名字 + 适用场景」，正文由 Agent 自取。`messages.skills` 记录每轮用了哪些。
