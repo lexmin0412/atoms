@@ -177,7 +177,7 @@ export default function Credits() {
       </div>
 
       <div className="panel overflow-x-auto">
-        <table className="w-full text-left text-[12.5px] whitespace-nowrap">
+        <table className="w-full text-left text-[12.5px] whitespace-nowrap lg:whitespace-normal">
           <thead className="bg-muted/50 text-muted-foreground text-[11.5px]">
             <tr>
               <th className="px-3 py-2 font-normal">时间</th>

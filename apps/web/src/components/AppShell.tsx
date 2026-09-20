@@ -211,7 +211,7 @@ export function AppShell({
           'border-border bg-surface flex shrink-0 flex-col border-r',
           // 移动端：抽屉（覆盖式）；桌面端：静态列（可折叠）
           'fixed inset-y-0 left-0 z-50 w-64 transition-transform duration-200',
-          'lg:static lg:z-auto lg:translate-x-0 lg:transition-[width]',
+          'lg:static lg:z-auto lg:translate-x-0 lg:transition-[width] lg:duration-150',
           // 关闭时用 invisible：translate 只是视觉位移，链接仍会被读屏/键盘 focus 到
           drawerOpen ? 'visible translate-x-0' : 'invisible -translate-x-full',
           collapsed ? 'lg:w-16' : 'lg:w-64',
@@ -277,7 +277,7 @@ export function AppShell({
               onClick={() => setDrawerOpen(false)}
               className={cx(
                 'flex items-center gap-2.5 rounded-md text-[13px] transition-colors',
-                compact ? 'justify-center px-0 py-2.5' : 'px-2.5 py-2.5',
+                compact ? 'justify-center px-0 py-2.5 lg:py-2' : 'px-2.5 py-2.5 lg:py-2',
                 isActive(n.to)
                   ? 'bg-muted font-medium text-foreground'
                   : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',

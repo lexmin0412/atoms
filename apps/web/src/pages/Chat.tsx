@@ -659,7 +659,7 @@ export default function Chat() {
         }
         style={isWide && leftWidth ? { width: leftWidth } : undefined}
       >
-        <div className="border-border flex h-12 shrink-0 items-center gap-2 overflow-x-auto border-b pr-3 pl-11 lg:gap-3 lg:pl-[calc(0.75rem+var(--nav-overlay,0px))]">
+        <div className="border-border flex h-12 shrink-0 items-center gap-2 overflow-x-auto border-b pr-3 pl-11 lg:gap-3 lg:overflow-visible lg:pl-[calc(0.75rem+var(--nav-overlay,0px))]">
           {/* 移动端：面板是全屏的，必须给一条回到聊天的路 */}
           <button
             onClick={() => setShowPanel(false)}

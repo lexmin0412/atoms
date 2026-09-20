@@ -48,7 +48,7 @@ export default function Skills({
     <div
       className={cx(
         'flex min-h-0 flex-1 flex-col',
-        !embedded && 'mx-auto w-full max-w-4xl px-4 sm:px-8',
+        !embedded && 'mx-auto w-full max-w-4xl px-4 lg:px-0',
       )}
     >
       <div
