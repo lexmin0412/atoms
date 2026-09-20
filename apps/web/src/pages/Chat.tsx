@@ -47,8 +47,8 @@ function clampChatWidth(width: number, containerWidth: number) {
 
 function friendlyError(msg: string): string {
   // 注意：这几种是不同原因，别合并成一句话（否则用户不知道该怎么办）
-  if (/消息上限|24 小时内的消息/.test(msg)) {
-    return '你已用完 24 小时内的消息额度，额度会自动恢复，稍后再试。';
+  if (/积分已用完|额度会在下个周期/.test(msg)) {
+    return '积分已用完，额度会在下个周期自动恢复。';
   }
   if (/当前运行中的应用较多|busy/.test(msg)) {
     return '当前并发已满（同时运行的应用较多），请等一会儿再试。';
@@ -293,6 +293,7 @@ export default function Chat() {
   const [previewVersion, setPreviewVersion] = useState(0);
   const [previewSrc, setPreviewSrc] = useState('');
   const [showPanel, setShowPanel] = useState(false);
+  const [publishError, setPublishError] = useState('');
   const [deploy, setDeploy] = useState<{
     status: string;
     url?: string;
@@ -405,9 +406,11 @@ export default function Chat() {
     try {
       const r = await api.publish(id);
       setDeploy({ status: r.status, url: r.url, firstTime: r.firstTime });
+      setPublishError('');
     } catch (err) {
-      window.alert(
-        '发布失败：' + (err instanceof Error ? err.message : '请先让 Agent 成功构建'),
+      // 用站内提示替代 window.alert（阻塞式、且此前只展示原始信息）
+      setPublishError(
+        err instanceof Error ? err.message : '发布失败，请先让 Agent 构建成功',
       );
     } finally {
       setPublishing(false);
@@ -416,8 +419,14 @@ export default function Chat() {
 
   async function unpublish() {
     if (!id) return;
-    await api.unpublish(id).catch(() => {});
-    setDeploy({ status: 'stopped' });
+    try {
+      await api.unpublish(id);
+      setDeploy({ status: 'stopped' });
+      setPublishError('');
+    } catch (err) {
+      // 失败时保留原状态：谎报「已下架」会让用户以为链接已失效
+      setPublishError(err instanceof Error ? err.message : '下架失败，请重试');
+    }
   }
 
   // 发布启动中：轮询到 running
@@ -427,6 +436,9 @@ export default function Chat() {
       const r = await api.deployment(id).catch(() => null);
       if (r) {
         setDeploy((d) => ({ status: r.status, url: r.url, firstTime: d?.firstTime }));
+        if (r.status === 'error') {
+          setPublishError((r as { message?: string }).message ?? '发布失败，请重新发布');
+        }
       }
     }, 2500);
     return () => clearInterval(t);
@@ -629,6 +641,16 @@ export default function Chat() {
             {deploy.status === 'stopped' && (
               <span className="text-muted-foreground">
                 已下架（点「发布」可重新上线）
+              </span>
+            )}
+            {publishError && (
+              <span className="text-danger min-w-0 flex-1 break-words">
+                {publishError}
+              </span>
+            )}
+            {!publishError && deploy.status === 'running' && !deploy.url && (
+              <span className="text-muted-foreground min-w-0 flex-1">
+                发布成功，但平台未配置应用域名（APPS_DOMAIN），暂时拿不到访问地址。
               </span>
             )}
             {deploy.status === 'error' && (

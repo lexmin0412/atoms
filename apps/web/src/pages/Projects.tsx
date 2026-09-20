@@ -122,10 +122,17 @@ export default function Projects() {
   const [renaming, setRenaming] = useState<ProjectDto | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleting, setDeleting] = useState<ProjectDto | null>(null);
+  const [error, setError] = useState('');
 
+  /** 列表加载失败：不能清空已有列表，否则用户以为项目全被删了 */
   async function refresh() {
-    const r = await api.listProjects().catch(() => ({ projects: [] as ProjectDto[] }));
-    setProjects(r.projects);
+    try {
+      const r = await api.listProjects();
+      setProjects(r.projects);
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '项目列表加载失败');
+    }
   }
 
   useEffect(() => {
@@ -133,9 +140,13 @@ export default function Projects() {
     api
       .listProjects()
       .then((r) => {
-        if (alive) setProjects(r.projects);
+        if (!alive) return;
+        setProjects(r.projects);
+        setError('');
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        if (alive) setError(err instanceof Error ? err.message : '项目列表加载失败');
+      })
       .finally(() => {
         if (alive) setLoading(false);
       });
@@ -153,6 +164,9 @@ export default function Projects() {
       setTitle('');
       setCreating(false);
       nav(`/p/${r.project.id}`);
+    } catch (err) {
+      // 以前漏了 catch：创建失败时弹窗不关、也没有任何反馈
+      setError(err instanceof Error ? err.message : '创建失败，请重试');
     } finally {
       setBusy(false);
     }
@@ -160,13 +174,23 @@ export default function Projects() {
 
   async function rename(p: ProjectDto) {
     const name = renameValue.trim();
-    if (name) await api.renameProject(p.id, name).catch(() => {});
+    if (name) {
+      try {
+        await api.renameProject(p.id, name);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '重命名失败');
+      }
+    }
     setRenaming(null);
     refresh();
   }
 
   async function remove(p: ProjectDto) {
-    await api.deleteProject(p.id).catch(() => {});
+    try {
+      await api.deleteProject(p.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除失败');
+    }
     setDeleting(null);
     refresh();
   }
@@ -181,6 +205,19 @@ export default function Projects() {
         </Button>
       </div>
 
+      {/* 已有列表时的操作失败（重命名/删除等）：顶部提示，不清空列表 */}
+      {error && projects.length > 0 && (
+        <div className="border-danger/30 bg-danger/8 text-danger mb-4 flex items-start gap-2 rounded-sm border px-3 py-2 text-[12.5px]">
+          <span className="min-w-0 flex-1 break-words">{error}</span>
+          <button
+            className="shrink-0 underline opacity-80 hover:opacity-100"
+            onClick={() => setError('')}
+          >
+            关闭
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {[0, 1, 2, 3].map((i) => (
@@ -192,6 +229,31 @@ export default function Projects() {
               </div>
             </div>
           ))}
+        </div>
+      ) : error && projects.length === 0 ? (
+        <div className="panel flex flex-col items-center px-6 py-20 text-center">
+          <p className="text-[13.5px] font-medium">项目列表加载失败</p>
+          <p className="text-muted-foreground mt-1.5 max-w-sm text-[12.5px] break-words">
+            {error}
+          </p>
+          <Button
+            className="mt-5"
+            onClick={() => {
+              setLoading(true);
+              void api
+                .listProjects()
+                .then((r) => {
+                  setProjects(r.projects);
+                  setError('');
+                })
+                .catch((err: unknown) =>
+                  setError(err instanceof Error ? err.message : '项目列表加载失败'),
+                )
+                .finally(() => setLoading(false));
+            }}
+          >
+            重试
+          </Button>
         </div>
       ) : projects.length === 0 ? (
         <div className="panel flex flex-col items-center px-6 py-20 text-center">

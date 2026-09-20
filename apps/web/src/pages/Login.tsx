@@ -14,7 +14,14 @@ const POINTS = [
   ['一键发布', '生成可分享的独立应用地址'],
 ];
 
-export default function Login({ onLogin }: { onLogin: (u: UserDto) => void }) {
+export default function Login({
+  onLogin,
+  note,
+}: {
+  onLogin: (u: UserDto) => void;
+  /** 会话过期等引导文案（来自 App） */
+  note?: string;
+}) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
@@ -131,8 +138,14 @@ export default function Login({ onLogin }: { onLogin: (u: UserDto) => void }) {
               onChange={(e) => setPassword(e.target.value)}
             />
 
+            {!error && note && (
+              <p className="border-warn/30 bg-warn/8 text-muted-foreground rounded-sm border px-2.5 py-1.5 text-[12.5px]">
+                {note}
+              </p>
+            )}
+
             {error && (
-              <p className="border-danger/30 bg-danger/8 text-danger rounded-sm border px-2.5 py-1.5 text-[12.5px]">
+              <p className="border-danger/30 bg-danger/8 text-danger rounded-sm border px-2.5 py-1.5 text-[12.5px] break-words">
                 {error}
               </p>
             )}

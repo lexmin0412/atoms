@@ -1,5 +1,5 @@
 import type { ProjectDto } from '@atoms/shared';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -52,16 +52,42 @@ export default function Credits() {
   const [page, setPage] = useState(1);
   const [projectId, setProjectId] = useState('');
   const [projects, setProjects] = useState<ProjectDto[]>([]);
+  const [error, setError] = useState('');
+  const [ledgerError, setLedgerError] = useState('');
+
+  // 「重试」按钮用（事件回调里改 state，符合 oxlint 规则）
+  const loadSummary = useCallback(async () => {
+    try {
+      setSummary(await api.credits());
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '积分信息加载失败');
+    }
+  }, []);
 
   useEffect(() => {
+    let cancelled = false;
     api
       .credits()
-      .then(setSummary)
-      .catch(() => {});
+      .then((r) => {
+        if (cancelled) return;
+        setSummary(r);
+        setError('');
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : '积分信息加载失败');
+        }
+      });
     api
       .listProjects()
-      .then((r) => setProjects(r.projects))
+      .then((r) => {
+        if (!cancelled) setProjects(r.projects);
+      })
       .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -72,8 +98,14 @@ export default function Credits() {
         if (cancelled) return;
         setRows(r.rows);
         setTotal(r.total);
+        setLedgerError('');
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setRows([]);
+        setTotal(0);
+        setLedgerError(err instanceof Error ? err.message : '明细加载失败');
+      });
     return () => {
       cancelled = true;
     };
@@ -91,6 +123,17 @@ export default function Credits() {
           按 token 计量，1 积分 = $0.01 · 每月自动补满
         </p>
       </div>
+
+      {error && !summary && (
+        <div className="panel mb-8 flex items-center gap-3 p-4">
+          <span className="text-danger min-w-0 flex-1 text-[12.5px] break-words">
+            {error}
+          </span>
+          <Button size="sm" variant="outline" onClick={() => void loadSummary()}>
+            重试
+          </Button>
+        </div>
+      )}
 
       {summary && (
         <div className="mb-8 grid gap-3 sm:grid-cols-3">
@@ -187,8 +230,14 @@ export default function Credits() {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="text-muted-foreground px-3 py-12 text-center">
-                  暂无记录
+                <td
+                  colSpan={6}
+                  className={cx(
+                    'px-3 py-12 text-center',
+                    ledgerError ? 'text-danger' : 'text-muted-foreground',
+                  )}
+                >
+                  {ledgerError || '暂无记录'}
                 </td>
               </tr>
             )}

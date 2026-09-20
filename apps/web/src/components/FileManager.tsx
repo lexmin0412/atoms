@@ -113,6 +113,8 @@ export default function FileManager({ projectId, busy }: Props) {
     value: string;
   } | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
+  /** 文件树加载失败（与「真的没文件」区分开） */
+  const [treeError, setTreeError] = useState('');
   const [deleting, setDeleting] = useState<TreeNode | null>(null);
 
   const flat = useMemo(() => flattenTree(nodes, expanded), [nodes, expanded]);
@@ -120,25 +122,46 @@ export default function FileManager({ projectId, busy }: Props) {
 
   const refresh = useCallback(
     async (keepActiveId: string | null) => {
-      const r = await api.tree(projectId).catch(() => ({ nodes: [], busy: false }));
-      setNodes(r.nodes);
-      if (keepActiveId && !r.nodes.some((n) => n.id === keepActiveId)) {
-        setActiveId(null);
-        setContent('');
-        setDirty(false);
+      try {
+        const r = await api.tree(projectId);
+        setNodes(r.nodes);
+        setTreeError('');
+        if (keepActiveId && !r.nodes.some((n) => n.id === keepActiveId)) {
+          setActiveId(null);
+          setContent('');
+          setDirty(false);
+        }
+      } catch (err) {
+        // 刷新失败保留旧树，只提示（清空会让人以为文件都没了）
+        setTreeError(err instanceof Error ? err.message : '文件列表刷新失败');
       }
     },
     [projectId],
   );
+
+  const loadTree = useCallback(async () => {
+    try {
+      const r = await api.tree(projectId);
+      setNodes(r.nodes);
+      setTreeError('');
+    } catch (err) {
+      setTreeError(err instanceof Error ? err.message : '文件列表加载失败');
+    }
+  }, [projectId]);
 
   useEffect(() => {
     let cancelled = false;
     api
       .tree(projectId)
       .then((r) => {
-        if (!cancelled) setNodes(r.nodes);
+        if (cancelled) return;
+        setNodes(r.nodes);
+        setTreeError('');
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setTreeError(err instanceof Error ? err.message : '文件列表加载失败');
+      });
     return () => {
       cancelled = true;
     };
@@ -147,15 +170,21 @@ export default function FileManager({ projectId, busy }: Props) {
   const openFile = useCallback(
     async (node: TreeNode) => {
       if (node.type !== 'file') return;
-      setActiveId(node.id);
       setMenu(null);
-      const r = await api
-        .file(projectId, node.path)
-        .catch(() => ({ path: node.path, content: '', version: node.version }));
-      setContent(r.content);
-      setVersion(r.version);
-      setDirty(false);
-      setNotice('');
+      try {
+        const r = await api.file(projectId, node.path);
+        setActiveId(node.id);
+        setContent(r.content);
+        setVersion(r.version);
+        setDirty(false);
+        setNotice('');
+      } catch (err) {
+        // 读不到就不要打开空编辑器：否则用户一保存就把原文件覆盖成空白
+        setActiveId(null);
+        setContent('');
+        setDirty(false);
+        setNotice(err instanceof Error ? err.message : '文件加载失败，请重试');
+      }
     },
     [projectId],
   );
@@ -182,12 +211,14 @@ export default function FileManager({ projectId, busy }: Props) {
 
   async function reload() {
     if (!activeNode) return;
-    const r = await api.file(projectId, activeNode.path).catch(() => null);
-    if (r) {
+    try {
+      const r = await api.file(projectId, activeNode.path);
       setContent(r.content);
       setVersion(r.version);
       setDirty(false);
-      setNotice('');
+      setNotice('已重新加载');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : '重新加载失败');
     }
   }
 
@@ -311,7 +342,18 @@ export default function FileManager({ projectId, busy }: Props) {
             setMenu({ x: e.clientX, y: e.clientY, node: null });
           }}
         >
-          {flat.length === 0 && (
+          {treeError && (
+            <div className="px-3 py-1 text-[11.5px]">
+              <p className="text-danger break-words">{treeError}</p>
+              <button
+                className="text-muted-foreground mt-1 underline hover:opacity-100"
+                onClick={() => void loadTree()}
+              >
+                重试
+              </button>
+            </div>
+          )}
+          {!treeError && flat.length === 0 && (
             <p className="text-muted-foreground px-3 py-1 text-[11.5px]">暂无文件</p>
           )}
           {flat.map(({ node: n, depth }) => (

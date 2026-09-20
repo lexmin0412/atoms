@@ -1,5 +1,33 @@
 import type { UserDto, ProjectDto } from '@atoms/shared';
 
+/** 会话失效事件：由 App 统一处理（清用户态 + 提示重新登录） */
+export const UNAUTHORIZED_EVENT = 'atoms:unauthorized';
+
+/** 后端只回了错误码时，用它兜底成用户能看懂的中文 */
+const FRIENDLY: Record<string, string> = {
+  not_found: '内容不存在或无权访问',
+  invalid_input: '输入不合法，请检查后重试',
+  unauthorized: '登录已过期，请重新登录',
+  id_required: '请求参数缺失，请刷新页面后重试',
+  path_required: '缺少文件路径',
+  table_not_found: '数据表不存在',
+  busy: '正在生成中，请稍后再试',
+  exists: '同名内容已存在',
+  conflict: '内容已被更改，请重新加载后再试',
+  release_limit: '已发布应用数量已达上限，请先下架其他应用',
+  not_built: '还没有可用的构建产物，请先让 Agent 构建成功',
+  build_failed: '构建未通过，请查看构建日志',
+  sandbox_unreachable: '运行环境暂时不可用，请稍后重试',
+  sandbox_error: '运行环境暂时不可用，请稍后重试',
+  internal_error: '服务暂时不可用，请稍后重试',
+  devapp_unreachable: '开发预览后端未运行，请点「重新构建」后再试',
+  release_unreachable: '应用后端暂时无响应，请稍后重试',
+  forbidden_origin: '请求来源校验失败，请刷新页面后重试',
+};
+
+/** 登录/注册自身的 401 是「账号密码错」，不该触发全局登出 */
+const AUTH_ENDPOINTS = ['/api/auth/login', '/api/auth/register'];
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     credentials: 'include',
@@ -11,8 +39,17 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
       error?: string;
       message?: string;
     };
-    const err = new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
-    (err as Error & { code?: string }).code = body.error;
+    const message =
+      body.message ??
+      (body.error ? (FRIENDLY[body.error] ?? body.error) : undefined) ??
+      (res.status >= 500 ? '服务暂时不可用，请稍后重试' : `请求失败（${res.status}）`);
+    const err = new Error(message) as Error & { code?: string; status?: number };
+    err.code = body.error;
+    err.status = res.status;
+    // 会话过期：广播给 App 统一跳登录，避免各个页面各自处理（或静默失败）
+    if (res.status === 401 && !AUTH_ENDPOINTS.some((p) => url.startsWith(p))) {
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    }
     throw err;
   }
   return (await res.json()) as T;

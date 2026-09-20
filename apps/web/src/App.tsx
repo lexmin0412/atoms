@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 
 import { AppShell } from './components/AppShell';
-import { api } from './lib/api';
+import { api, UNAUTHORIZED_EVENT } from './lib/api';
 import Chat from './pages/Chat';
 import Credits from './pages/Credits';
 import Login from './pages/Login';
@@ -23,6 +23,8 @@ function Shell({ user, onLogout }: { user: UserDto; onLogout: () => void }) {
 export default function App() {
   const [user, setUser] = useState<UserDto | null>(null);
   const [loading, setLoading] = useState(true);
+  /** 会话过期时的提示，登录页展示 */
+  const [sessionNote, setSessionNote] = useState('');
 
   useEffect(() => {
     api
@@ -31,6 +33,24 @@ export default function App() {
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
+
+  // 任意请求遇到 401（会话过期）都在这里统一处理
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setUser((u) => {
+        if (u) setSessionNote('登录已过期，请重新登录');
+        return null;
+      });
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
+
+  function logout() {
+    // 必须调用服务端登出：否则 cookie 仍在，刷新页面会「自动重新登录」
+    void api.logout().catch(() => {});
+    setUser(null);
+  }
 
   if (loading) {
     return (
@@ -46,7 +66,18 @@ export default function App() {
   if (!user) {
     return (
       <Routes>
-        <Route path="/login" element={<Login onLogin={setUser} />} />
+        <Route
+          path="/login"
+          element={
+            <Login
+              note={sessionNote}
+              onLogin={(u) => {
+                setSessionNote('');
+                setUser(u);
+              }}
+            />
+          }
+        />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
@@ -55,7 +86,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Navigate to="/" replace />} />
-      <Route element={<Shell user={user} onLogout={() => setUser(null)} />}>
+      <Route element={<Shell user={user} onLogout={logout} />}>
         <Route path="/" element={<Projects />} />
         <Route path="/p/:id" element={<Chat />} />
         <Route path="/credits" element={<Credits />} />

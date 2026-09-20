@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { api } from '../lib/api';
 import { cx } from '../lib/cx';
@@ -34,21 +34,41 @@ export default function DatabaseView({ projectId }: { projectId: string }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  /** 加载失败与「真的没有表」必须分开：以前失败会被显示成「还没有数据库表」 */
+  const [error, setError] = useState('');
+
+  const loadAvailability = useCallback(async () => {
+    try {
+      const r = await api.dbAvailability(projectId);
+      setAvailability(r);
+      setError('');
+      if (r.dev.available) setEnv('dev');
+      else if (r.prod.available) setEnv('prod');
+    } catch (err) {
+      setAvailability(null);
+      setError(err instanceof Error ? err.message : '数据库信息加载失败');
+    }
+  }, [projectId]);
 
   useEffect(() => {
+    let cancelled = false;
     api
       .dbAvailability(projectId)
       .then((r) => {
+        if (cancelled) return;
         setAvailability(r);
+        setError('');
         if (r.dev.available) setEnv('dev');
         else if (r.prod.available) setEnv('prod');
       })
-      .catch(() =>
-        setAvailability({
-          dev: { available: false, tables: 0 },
-          prod: { available: false, tables: 0 },
-        }),
-      );
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setAvailability(null);
+        setError(err instanceof Error ? err.message : '数据库信息加载失败');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [projectId]);
 
   useEffect(() => {
@@ -69,8 +89,13 @@ export default function DatabaseView({ projectId }: { projectId: string }) {
       .then((r) => {
         setTables(r.tables);
         setActive(r.tables[0]?.name ?? '');
+        setError('');
       })
-      .catch(() => setTables([]));
+      .catch((err: unknown) => {
+        setTables([]);
+        setActive('');
+        setError(err instanceof Error ? err.message : '数据表加载失败');
+      });
   }, [projectId, env, availability]);
 
   useEffect(() => {
@@ -95,6 +120,23 @@ export default function DatabaseView({ projectId }: { projectId: string }) {
   }, [projectId, env, active, page]);
 
   if (!availability) {
+    if (error) {
+      return (
+        <div className="grid flex-1 place-items-center p-6">
+          <div className="text-center">
+            <p className="text-danger text-[12.5px] break-words">{error}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-3"
+              onClick={() => void loadAvailability()}
+            >
+              重试
+            </Button>
+          </div>
+        </div>
+      );
+    }
     return <p className="text-muted-foreground p-4 text-[12.5px]">加载中…</p>;
   }
 
@@ -140,6 +182,9 @@ export default function DatabaseView({ projectId }: { projectId: string }) {
 
       <div className="flex min-h-0 flex-1">
         <div className="border-border w-44 shrink-0 overflow-y-auto border-r py-1.5">
+          {error && (tables ?? []).length === 0 && (
+            <p className="text-danger px-2.5 py-1 text-[11px] break-words">{error}</p>
+          )}
           {(tables ?? []).map((t) => (
             <button
               key={t.name}
