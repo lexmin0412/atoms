@@ -1,7 +1,7 @@
 import type { FileMap, Runtime, Workspace, ExecChunk } from '@atoms/shared';
 
 import { applyEdit } from './edit';
-import { signedFetch, signedJson } from './http';
+import { SandboxError, signedFetch, signedJson } from './http';
 
 /**
  * Design 2 实现：对接 B 机沙箱服务。
@@ -77,12 +77,18 @@ export class SandboxRuntime implements Runtime {
   }
 
   async *exec(ws: Workspace, cmd: string): AsyncIterable<ExecChunk> {
+    // 流式执行：长命令（pnpm install / build）可能跑几分钟，不能套用请求超时
     const res = await signedFetch(`/sandbox/${ws.id}/exec`, {
       method: 'POST',
       body: JSON.stringify({ cmd }),
+      timeoutMs: 0,
     });
     if (!res.ok || !res.body) {
-      throw new Error(`exec failed: ${res.status}`);
+      throw new SandboxError(
+        res.status < 500 ? res.status : 503,
+        'exec_failed',
+        '运行环境暂时不可用，请稍后重试',
+      );
     }
     const reader = res.body.getReader();
     const dec = new TextDecoder();

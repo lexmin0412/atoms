@@ -114,7 +114,7 @@ export async function startRelease(
     containerName(id),
     `--memory=${config.memory}`,
     `--memory-swap=${config.memory}`,
-    '--cpus=1',
+    `--cpus=${config.cpus}`,
     '--pids-limit=256',
     '--cap-drop=ALL',
     '--security-opt=no-new-privileges',
@@ -157,7 +157,10 @@ export async function releaseReady(
   const st = await releaseStatus(id);
   if (!st.running || !st.ip) return { ...st, ready: false };
   try {
-    await fetch(`http://${st.ip}:${config.releasePort}/`, { method: 'GET' });
+    await fetch(`http://${st.ip}:${config.releasePort}/`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(5_000),
+    });
     return { ...st, ready: true };
   } catch {
     return { ...st, ready: false };
@@ -195,11 +198,12 @@ export async function startDevApp(
   force = false,
 ): Promise<void> {
   const name = devAppContainerName(id);
-  if (force) {
-    await docker(['rm', '-f', name]).catch(() => {});
-  } else if (await containerIp(name)) {
+  // 非 force 也不能直接 docker run：已退出但同名残留的容器会让 run 报
+  // "Conflict. The container name ... is already in use"，于是自动预览永远起不来。
+  if (!force && (await containerIp(name))) {
     return; // 已在跑
   }
+  await docker(['rm', '-f', name]).catch(() => {});
 
   const store = join(config.root, '.pnpm-store');
   await docker([
@@ -209,7 +213,7 @@ export async function startDevApp(
     name,
     `--memory=${config.memory}`,
     `--memory-swap=${config.memory}`,
-    '--cpus=1',
+    `--cpus=${config.cpus}`,
     '--pids-limit=256',
     '--cap-drop=ALL',
     '--security-opt=no-new-privileges',

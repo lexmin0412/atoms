@@ -16,6 +16,7 @@ import {
   devAppTarget,
 } from './release';
 import {
+  docker,
   ensureSandbox,
   destroySandbox,
   execStream,
@@ -31,9 +32,43 @@ import {
   listRunningSandboxIds,
 } from './workspace';
 
+/** 反代超时：后端卡死时不要一直挂着 */
+const PROXY_TIMEOUT_MS = 60_000;
+
 const app = new Hono<SandboxEnv>();
 
-app.get('/health', (c) => c.json({ ok: true }));
+app.get('/health', async (c) => {
+  // docker 挂了服务就是半死的：健康检查必须能反映出来（否则探活失真）
+  try {
+    await docker(['version', '--format', '{{.Server.Version}}']);
+  } catch {
+    return c.json(
+      { ok: false, docker: false, message: 'docker 不可用，沙箱无法工作' },
+      503,
+    );
+  }
+  return c.json({ ok: true, docker: true });
+});
+
+/**
+ * 未捕获异常 → 统一 JSON。
+ * 运行时默认返回纯文本 "Internal Server Error"，A 侧无法解析、用户也看不到原因。
+ */
+app.onError((err, c) => {
+  const code = (err as { code?: string })?.code;
+  if (code === 'ENOENT') {
+    return c.json({ error: 'not_found', message: '文件不存在' }, 404);
+  }
+  if (err instanceof SyntaxError || err.name === 'BadRequestError') {
+    return c.json({ error: 'bad_request', message: '请求格式不正确' }, 400);
+  }
+  if (err.message === 'path escapes workspace') {
+    return c.json({ error: 'invalid_path', message: '路径不合法' }, 400);
+  }
+  console.error('[sandbox] unhandled error:', err.message);
+  return c.json({ error: 'sandbox_failed', message: '沙箱操作失败，请稍后重试' }, 500);
+});
+app.notFound((c) => c.json({ error: 'not_found', message: '接口不存在' }, 404));
 
 app.use('/sandbox/*', hmacAuth);
 app.use('/sandbox', hmacAuth);
@@ -153,6 +188,7 @@ app.post('/sandbox/:id/dist-snapshot', async (c) => {
 
 app.delete('/sandbox/:id', async (c) => {
   await stopDevApp(c.req.param('id')).catch(() => {});
+  await stopRelease(c.req.param('id')).catch(() => {});
   await destroySandbox(c.req.param('id'));
   forget(c.req.param('id'));
   return c.json({ ok: true });
@@ -199,7 +235,16 @@ async function appProxy(c: Context<SandboxEnv>) {
   if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
     init.body = await c.req.arrayBuffer();
   }
-  const res = await fetch(target, init);
+  let res: Response;
+  try {
+    res = await fetch(target, { ...init, signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) });
+  } catch {
+    // 容器在跑但后端已死 / 端口未就绪：给可重试的 503（不回传内部地址）
+    return c.json(
+      { error: 'release_unreachable', message: '应用后端暂时无响应，请稍后重试' },
+      503,
+    );
+  }
   const out = new Headers(res.headers);
   out.delete('content-encoding');
   out.delete('content-length');
@@ -252,14 +297,14 @@ async function devAppProxy(c: Context<SandboxEnv>) {
   }
   let res: Response;
   try {
-    res = await fetch(full, init);
-  } catch (err) {
+    res = await fetch(full, { ...init, signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) });
+  } catch {
     // 容器刚退出 / 端口未就绪：给出可操作的 503，而不是 500
+    // 注意：不回传 detail —— 该路径对公网开放，原始错误含容器内网地址
     return c.json(
       {
         error: 'devapp_unreachable',
         message: '开发预览后端未运行。请在项目页面点「重新构建」后再试。',
-        detail: String(err).slice(0, 200),
       },
       503,
     );

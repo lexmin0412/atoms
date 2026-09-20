@@ -233,7 +233,15 @@ GET    /api/credits                  余额 + 本周期用量（顺带触发周�
 GET    /api/credits/ledger           消耗明细（分页，可按项目筛选）
 ```
 - `/chat` 走 SSE；nginx 必须关 buffering。
-- 额度：每用户 24h 消息上限 + 输入长度上限。
+- 额度：按积分（token 计量，见 `credits/`）；另有输入长度上限（4000 字）。
+
+**统一错误契约**（异常状态对外的一致行为）：
+- 所有错误响应都是 JSON `{ error, message }`；`app.onError` / `app.notFound` 兜底（默认实现会返回纯文本 `Internal Server Error`，前端只能显示「HTTP 500」且日志不过脱敏）。
+- `message` 一定是**面向用户的中文可操作文案**；内部细节（沙箱路径、上游响应体、SQL、容器 IP）只进 `logErr`，绝不回传。
+- A→B 调用统一 30s 超时（流式 `exec` 不设超时），连不上/超时归类为 `503 sandbox_unreachable`（「运行环境暂时不可用，请稍后重试」），不再落成通用 500。
+- 「沙箱不可达」与「业务前置不满足」严格区分：前者 503 可重试，后者 4xx 并说明原因（例如发布时探测不到后端，不能静默按纯前端发布）。
+- 启动期校验（`validateConfig`）：安全/核心项缺失（`SESSION_SECRET` 默认值、`APP_DATABASE_URL`、LLM Key、`SANDBOX_SHARED_SECRET`）→ 生产直接退出；功能降级项（`APPS_DOMAIN`/`RELEASE_DATABASE_URL`/`READONLY_DATABASE_URL`/COS 不完整）→ 告警。
+- 沙箱侧 `/health` 含 docker 自检；反代统一 503 + 文案（不回传内部地址）。
 
 ## 8. 前端（React）
 

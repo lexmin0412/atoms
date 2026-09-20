@@ -17,6 +17,7 @@ import { currentPeriod, ensureGrant, spend } from '../credits';
 import { computeCredits, getRates, pickUsage, roundCredits } from '../credits/pricing';
 import { query } from '../db';
 import { logErr } from '../redact';
+import { fail } from '../respond';
 import { getRuntime } from '../runtime';
 import { acquireWorkspace, snapshotProject } from '../runtime/manager';
 import { createTools } from '../tools';
@@ -93,7 +94,8 @@ chatRoutes.post('/:id/chat', async (c) => {
     if (msg.includes('429') || msg.includes('busy')) {
       return c.json({ error: 'busy', message: '当前运行中的应用较多，请稍后再试' }, 503);
     }
-    throw err;
+    // 沙箱不可达（隧道断/服务没起）也要给可重试的 503，而不是通用 500
+    return fail(c, err);
   }
 
   // 定价（失败会回退兜底费率，不阻塞生成）
@@ -196,13 +198,14 @@ chatRoutes.post('/:id/chat', async (c) => {
       } finally {
         settledCredits = await settle();
         if (settledCredits > 0) {
-          const remaining = await ensureGrant(user.id).catch(() => 0);
+          // 回读失败时省略 balance（前端保留上次值），不要伪造 0 误导用户
+          const remaining = await ensureGrant(user.id).catch(() => null);
           writer.write({
             type: 'data-credits',
             id: 'credits',
             data: {
               credits: settledCredits,
-              balance: remaining,
+              ...(remaining === null ? {} : { balance: remaining }),
               budgetExceeded,
             },
           } as never);

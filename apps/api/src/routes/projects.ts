@@ -17,8 +17,9 @@ import {
 import { logErr } from '../redact';
 import { ensureAppSchema, ensureDevSchema, databaseUrlFor } from '../release/db';
 import { publishFrontend } from '../release/frontend';
+import { fail } from '../respond';
 import { getRuntime, getSandboxRuntime } from '../runtime';
-import { signedFetch, signedJson } from '../runtime/http';
+import { SandboxError, signedFetch, signedJson } from '../runtime/http';
 import { destroyWorkspace, acquireWorkspace, withWorkspace } from '../runtime/manager';
 import type { Env } from './auth';
 
@@ -159,8 +160,8 @@ function fsError(c: Context<Env>, err: unknown): Response {
   if (msg === 'parent_not_found' || msg === 'parent_not_dir') {
     return c.json({ error: msg, message: '父目录无效' }, 400);
   }
-  logErr('[fs] error:', err);
-  return c.json({ error: 'fs_failed', message: msg }, 500);
+  // 未知异常：原始 message 可能带沙箱内部路径/上游报文，只落日志
+  return fail(c, err);
 }
 
 /** 校验写权限：返回错误响应或 null */
@@ -326,7 +327,15 @@ projectRoutes.post('/:id/rebuild', async (c) => {
     )) {
       if (chunk.data) log.push(chunk.data);
       if (chunk.exitCode !== undefined && chunk.exitCode !== 0) {
-        return c.json({ error: 'build_failed', message: log.join('').slice(-4000) }, 500);
+        // 构建失败通常是用户代码问题 → 422；日志是用户自己的构建输出，可回传
+        return c.json(
+          {
+            error: 'build_failed',
+            message: '构建未通过，请查看构建日志',
+            log: log.join('').slice(-4000),
+          },
+          422,
+        );
       }
     }
     const listing = await signedJson<{ files: string[] }>(`/sandbox/${id}/files`, {
@@ -337,10 +346,12 @@ projectRoutes.post('/:id/rebuild', async (c) => {
     }
     return c.json({ ok: true, log: log.join('').slice(-4000) });
   } catch (err) {
+    if (err instanceof SandboxError) return fail(c, err);
+    logErr('[rebuild] error:', err);
     return c.json(
       {
         error: 'build_failed',
-        message: (err as Error).message,
+        message: '构建环境出错，请稍后重试',
         log: log.join('').slice(-4000),
       },
       500,
@@ -386,18 +397,30 @@ projectRoutes.post('/:id/devapp', async (c) => {
   if (!project) return c.json({ error: 'not_found' }, 404);
 
   // 仅在项目含 apps/api 时启动
-  const listing = await signedJson<{ files: string[] }>(`/sandbox/${id}/files`, {
-    method: 'GET',
-  }).catch(() => ({ files: [] as string[] }));
-  const hasBackend = listing.files.some((f) => f.startsWith('apps/api/'));
+  let hasBackend: boolean;
+  try {
+    const listing = await signedJson<{ files: string[] }>(`/sandbox/${id}/files`, {
+      method: 'GET',
+    });
+    hasBackend = listing.files.some((f) => f.startsWith('apps/api/'));
+  } catch (err) {
+    // 探测失败时绝不能当成“纯前端”，否则含后端的应用会被发成残废版本
+    return fail(c, err);
+  }
   if (!hasBackend) return c.json({ hasBackend: false, ready: true });
 
   const schema = await ensureDevSchema(id);
   // 先确保开发沙箱存在（可能已被空闲回收）
-  await acquireWorkspace(id).catch(() => {});
-  await getSandboxRuntime()
-    .startDevApp(id, await databaseUrlFor(schema))
-    .catch(() => {});
+  try {
+    await acquireWorkspace(id);
+  } catch (err) {
+    return fail(c, err);
+  }
+  try {
+    await getSandboxRuntime().startDevApp(id, await databaseUrlFor(schema));
+  } catch (err) {
+    return fail(c, err);
+  }
   // 容器内需 install + 启动，给一点时间后再探测
   await new Promise((r) => setTimeout(r, 1500));
   const st = await getSandboxRuntime()
@@ -436,11 +459,17 @@ projectRoutes.post('/:id/publish', async (c) => {
   const project = await ownedProject(id, user.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
 
-  const snap = await signedJson<{ files: Record<string, string> }>(
-    `/sandbox/${id}/dist-snapshot`,
-    { method: 'POST' },
-  ).catch(() => null);
-  const files = snap?.files ?? {};
+  let snap: { files: Record<string, string> };
+  try {
+    snap = await signedJson<{ files: Record<string, string> }>(
+      `/sandbox/${id}/dist-snapshot`,
+      { method: 'POST' },
+    );
+  } catch (err) {
+    // 沙箱不可达 ≠ 没构建过：不能误导用户去重新构建
+    return fail(c, err);
+  }
+  const files = snap.files ?? {};
   if (Object.keys(files).length === 0) {
     return c.json(
       { error: 'not_built', message: '还没有可发布的构建产物，请先让 Agent 构建成功' },
@@ -480,7 +509,7 @@ projectRoutes.post('/:id/publish', async (c) => {
           409,
         );
       }
-      throw err;
+      return fail(c, err);
     }
   }
 
@@ -525,6 +554,16 @@ projectRoutes.get('/:id/deployment', async (c) => {
       );
       return c.json({ status: 'running', url: publishedUrl(id) });
     }
+    // 容器确实没在跑 → 发布失败，别再让前端无限轮询
+    if (st && !st.running) {
+      const message = '发布容器未能启动，请重新发布';
+      await query(
+        `update app_releases set status = 'error', error = $2, updated_at = now()
+          where project_id = $1`,
+        [id, message],
+      );
+      return c.json({ status: 'error', message, url: publishedUrl(id) });
+    }
   }
   return c.json({ status: row.status, url: publishedUrl(id) });
 });
@@ -536,9 +575,11 @@ projectRoutes.post('/:id/unpublish', async (c) => {
   if (!id) return c.json({ error: 'id_required' }, 400);
   const project = await ownedProject(id, user.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
-  await getSandboxRuntime()
-    .stopRelease(id)
-    .catch(() => {});
+  try {
+    await getSandboxRuntime().stopRelease(id);
+  } catch (err) {
+    return fail(c, err);
+  }
   await query(
     `update app_releases set status = 'stopped', container_ip = null, container_port = null, updated_at = now()
       where project_id = $1`,

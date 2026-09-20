@@ -17,6 +17,10 @@ function getRoPool(): pg.Pool {
     // 用户项目数据在应用库；只读角色也在应用库授权
     const connectionString =
       config.readonlyDatabaseUrl || config.appDatabaseUrl || config.databaseUrl;
+    if (!config.readonlyDatabaseUrl) {
+      // 明确告警：此处退回管理连接会让「只读」边界失效（启动校验也会提示）
+      console.warn('[readonly] READONLY_DATABASE_URL 未配置：数据库查看退回管理连接');
+    }
     roPool = new pg.Pool({ connectionString, max: 4 });
   }
   return roPool;

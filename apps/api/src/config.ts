@@ -41,3 +41,59 @@ export const config = {
     secretKey: process.env.TENCENT_SECRET_KEY ?? '',
   },
 };
+
+/**
+ * 启动期配置校验。
+ *
+ * 分两档：安全/核心项缺失 → 直接退出（宁可起不来，也不要带病运行）；
+ * 功能降级项 → 只告警（可用性优先，但日志里能查到原因）。
+ */
+export function validateConfig(): void {
+  const fatal: string[] = [];
+  const degraded: string[] = [];
+
+  if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET === 'dev-secret') {
+    fatal.push('SESSION_SECRET 缺失或仍是默认值（会话可被伪造）');
+  }
+  if (!process.env.APP_DATABASE_URL) {
+    fatal.push('APP_DATABASE_URL 缺失（用户项目数据库不可用）');
+  }
+  if (!config.llm.apiKey) {
+    fatal.push('OPENCODE_GO_API_KEY 缺失（无法调用模型）');
+  }
+  if (!config.sandbox.secret) {
+    fatal.push('SANDBOX_SHARED_SECRET 缺失（无法调用沙箱，生成/预览均不可用）');
+  }
+
+  if (!config.appsDomain) {
+    degraded.push('APPS_DOMAIN 缺失（发布/预览不返回可访问地址）');
+  }
+  if (!config.releaseDatabaseUrl) {
+    degraded.push('RELEASE_DATABASE_URL 缺失（发布的后端容器会连不上数据库）');
+  }
+  if (!config.readonlyDatabaseUrl) {
+    degraded.push('READONLY_DATABASE_URL 缺失（数据库查看会退回管理连接，只读边界失效）');
+  }
+  const cosParts = [
+    config.cos.bucket,
+    config.cos.region,
+    config.cos.secretId,
+    config.cos.secretKey,
+  ];
+  if (cosParts.some(Boolean) && !cosParts.every(Boolean)) {
+    degraded.push('COS_* 配置不完整（前端产物托管会失败）');
+  }
+
+  if (degraded.length) {
+    console.warn(
+      `[config] 功能降级告警：\n${degraded.map((d) => `  - ${d}`).join('\n')}`,
+    );
+  }
+  if (fatal.length) {
+    console.error(
+      `[config] 启动配置校验未通过：\n${fatal.map((d) => `  - ${d}`).join('\n')}`,
+    );
+    if (process.env.NODE_ENV === 'production') process.exit(1);
+    console.warn('[config] 非生产环境：继续启动');
+  }
+}
