@@ -350,7 +350,10 @@ export default function Skills({
                   {s.scope === 'project' ? '本项目' : '所有项目'}
                 </Badge>
               </div>
-              <p className="text-muted-foreground mt-1.5 line-clamp-2 text-[12px]">
+              <p
+                title={s.description}
+                className="text-muted-foreground mt-1.5 truncate text-[12px]"
+              >
                 {s.description}
               </p>
               {s.secretFlags.length > 0 && (

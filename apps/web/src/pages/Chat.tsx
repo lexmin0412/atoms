@@ -295,6 +295,8 @@ export default function Chat() {
   const [skills, setSkills] = useState<SkillDto[]>([]);
   const [pickedSkills, setPickedSkills] = useState<string[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  /** 键盘高亮的第几项（打开时为 0） */
+  const [pickerIndex, setPickerIndex] = useState(0);
   const [previewVersion, setPreviewVersion] = useState(0);
   const [previewSrc, setPreviewSrc] = useState('');
   /** 是否已有构建产物：null=未知（首次探测中）。没产物时不能渲染 iframe（会露出沙箱的 404 文本） */
@@ -574,6 +576,53 @@ export default function Chat() {
     setPickedSkills((prev) =>
       prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
     );
+  }
+
+  function pickSkill(name: string) {
+    toggleSkill(name);
+    setPickerOpen(false);
+    setInput('');
+  }
+
+  // 打开时，输入框内容即过滤词（"名字/适用场景" 模糊匹配）
+  const pickerQuery = pickerOpen ? input.trim().toLowerCase() : '';
+  const pickerSkills = pickerQuery
+    ? skills.filter(
+        (sk) =>
+          sk.name.toLowerCase().includes(pickerQuery) ||
+          sk.description.toLowerCase().includes(pickerQuery),
+      )
+    : skills;
+  // 过滤后列表变短时夹住高亮项（不额外存状态，避免竞态）
+  const pickerActive = Math.max(0, Math.min(pickerIndex, pickerSkills.length - 1));
+
+  function onComposerKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!pickerOpen) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setPickerIndex(pickerSkills.length ? (pickerActive + 1) % pickerSkills.length : 0);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setPickerIndex(
+        pickerSkills.length
+          ? (pickerActive - 1 + pickerSkills.length) % pickerSkills.length
+          : 0,
+      );
+    } else if (e.key === 'Enter') {
+      // 选定高亮项，且不要把这条消息发出去
+      const hit = pickerSkills[pickerActive];
+      if (hit) {
+        e.preventDefault();
+        pickSkill(hit.name);
+      } else {
+        e.preventDefault();
+        setPickerOpen(false);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setPickerOpen(false);
+      setInput('');
+    }
   }
 
   return (
@@ -958,35 +1007,51 @@ export default function Chat() {
                 value={input}
                 onChange={(e) => {
                   const v = e.target.value;
-                  setInput(v);
-                  // 输入 "/" 唤起技能选择器
-                  if (v === '/') {
+                  // 输入 "/" 唤起技能选择器（此后输入内容作为过滤词）
+                  if (v === '/' && !pickerOpen) {
                     setPickerOpen(true);
+                    setPickerIndex(0);
                     setInput('');
+                    return;
                   }
+                  setInput(v);
+                  setPickerIndex(0);
                 }}
-                onFocus={() => {
-                  if (!input && skills.length) setPickerOpen(false);
-                }}
+                onKeyDown={onComposerKeyDown}
+                onBlur={() => setPickerOpen(false)}
                 placeholder="描述你想创建的应用…（输入 / 可唤起技能）"
                 className="placeholder:text-muted-foreground/70 h-7 w-full bg-transparent px-0.5 text-[13px] outline-none"
               />
               {pickerOpen && (
-                <div className="border-border bg-surface absolute bottom-9 left-0 z-20 max-h-64 w-80 overflow-y-auto rounded-md border shadow-lg">
+                <div
+                  // 点在弹层内不要夺走输入框焦点（否则 onBlur 会先把它关掉）
+                  onMouseDown={(e) => e.preventDefault()}
+                  className="border-border bg-surface absolute bottom-9 left-0 z-20 max-h-64 w-80 overflow-y-auto rounded-md border shadow-lg"
+                >
                   {skills.length === 0 ? (
                     <p className="text-muted-foreground px-3 py-3 text-[12px]">
                       还没有技能。可在左侧「技能」页签里新建。
                     </p>
+                  ) : pickerSkills.length === 0 ? (
+                    <p className="text-muted-foreground px-3 py-3 text-[12px]">
+                      没有匹配「{input.trim()}」的技能
+                    </p>
                   ) : (
-                    skills.map((sk) => (
+                    pickerSkills.map((sk, i) => (
                       <button
                         key={sk.id}
                         type="button"
-                        onClick={() => {
-                          toggleSkill(sk.name);
-                          setPickerOpen(false);
-                        }}
-                        className="hover:bg-muted flex w-full items-start gap-2 px-3 py-2 text-left"
+                        ref={
+                          i === pickerActive
+                            ? (el) => el?.scrollIntoView({ block: 'nearest' })
+                            : undefined
+                        }
+                        onClick={() => pickSkill(sk.name)}
+                        onMouseEnter={() => setPickerIndex(i)}
+                        className={
+                          'flex w-full items-center gap-2 px-3 py-2 text-left ' +
+                          (i === pickerActive ? 'bg-muted' : '')
+                        }
                       >
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-1.5">
@@ -997,7 +1062,10 @@ export default function Chat() {
                               {sk.scope === 'project' ? '本项目' : '所有项目'}
                             </span>
                           </span>
-                          <span className="text-muted-foreground mt-0.5 line-clamp-1 block text-[11.5px]">
+                          <span
+                            title={sk.description}
+                            className="text-muted-foreground mt-0.5 block truncate text-[11.5px]"
+                          >
                             {sk.description}
                           </span>
                         </span>
@@ -1009,13 +1077,9 @@ export default function Chat() {
                       </button>
                     ))
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setPickerOpen(false)}
-                    className="border-border text-muted-foreground hover:text-foreground w-full border-t px-3 py-1.5 text-[11.5px]"
-                  >
-                    关闭
-                  </button>
+                  <p className="border-border text-muted-foreground/80 border-t px-3 py-1.5 text-[11px]">
+                    ↑↓ 选择 · Enter 确认 · Esc 关闭
+                  </p>
                 </div>
               )}
             </div>
@@ -1032,7 +1096,10 @@ export default function Chat() {
               )}
               <button
                 type="button"
-                onClick={() => setPickerOpen((v) => !v)}
+                onClick={() => {
+                  setPickerOpen((v) => !v);
+                  setPickerIndex(0);
+                }}
                 className="text-muted-foreground hover:text-foreground hover:bg-muted rounded-xs px-1.5 py-0.5 text-[11.5px] transition-colors"
                 title="选择技能"
               >
