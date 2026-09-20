@@ -26,6 +26,25 @@ export function scrubSecrets(text: string): string {
 }
 
 /**
+ * Postgres 的 text/jsonb 不能存 NUL（0x00），孤立代理项也会导致
+ * `unsupported Unicode escape sequence` / `invalid byte sequence for encoding "UTF8"`。
+ * 工具输出（终端里的二进制片段）与文件内容都可能带这些字符 ——
+ * 一旦写库就整条消息/整份快照失败（线上真实踩过：消息丢失 + 文件树不更新）。
+ * 统一在**写库/回给模型**前清洗。
+ */
+export function sanitizeText(text: string): string {
+  if (!text) return text;
+  return (
+    text
+      // eslint-disable-next-line no-control-regex
+      .replace(/\u0000/g, '')
+      // 孤立代理项（非成对）
+      .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+      .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+  );
+}
+
+/**
  * 扫描文本里的「疑似凭据」，返回人类可读的类别（用于 Skill 管理侧打警告标识）。
  * 只提示、不阻断 —— 是否真的泄露由用户判断。
  */

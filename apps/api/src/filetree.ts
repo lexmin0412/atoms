@@ -2,6 +2,7 @@ import type { FileMap } from '@atoms/shared';
 import type { PoolClient, QueryResult } from 'pg';
 
 import { pool, query } from './db';
+import { sanitizeText } from './redact';
 
 export interface TreeNode {
   id: string;
@@ -111,7 +112,10 @@ export async function saveFileMap(projectId: string, map: FileMap) {
         await client.query('delete from files where id = $1', [row.id]);
       }
     }
-    for (const [path, content] of Object.entries(map)) {
+    for (const [path, raw] of Object.entries(map)) {
+      // 兜底清洗：沙箱里可能有含 NUL 的文件（二进制/终端片段），
+      // 直接写库会整批失败（线上真实踩过）
+      const content = sanitizeText(raw);
       const parent = await ensureDirChain(client, projectId, path);
       const name = path.split('/').pop() as string;
       await client.query(

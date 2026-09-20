@@ -2,10 +2,12 @@ import type { Runtime, Workspace } from '@atoms/shared';
 import { tool } from 'ai';
 import { z } from 'zod';
 
-import { forbiddenReason, scrubSecrets } from './redact';
+import { forbiddenReason, sanitizeText, scrubSecrets } from './redact';
 import { skillBody, skillsBrief } from './skills';
 
 const MAX_CMD_OUTPUT = 8000;
+/** 单次 read_file 回给模型的上限：避免把大文件原样塞进上下文（会拖慢/拖挂上游） */
+const MAX_FILE_OUTPUT = 24_000;
 
 export type Emit = (part: unknown) => void;
 
@@ -33,11 +35,19 @@ export function createTools(
       inputSchema: z.object({
         path: z.string().describe('相对项目根的路径，例如 apps/web/src/App.tsx'),
       }),
-      execute: async ({ path }) => ({
-        path,
-        // 兜底脱敏：万一文件里混入凭据，也不让它进入模型上下文
-        content: scrubSecrets(await runtime.readFile(ws, path)),
-      }),
+      execute: async ({ path }) => {
+        const raw = sanitizeText(scrubSecrets(await runtime.readFile(ws, path)));
+        const truncated = raw.length > MAX_FILE_OUTPUT;
+        return {
+          path,
+          content: truncated ? raw.slice(0, MAX_FILE_OUTPUT) : raw,
+          ...(truncated
+            ? {
+                note: `文件较大（${raw.length} 字符），只返回前 ${MAX_FILE_OUTPUT} 字符；需要后续内容请用 run_command（如 sed -n）分段查看。`,
+              }
+            : {}),
+        };
+      },
     }),
 
     write_file: tool({
@@ -47,7 +57,8 @@ export function createTools(
         content: z.string(),
       }),
       execute: async ({ path, content }) => {
-        await runtime.writeFile(ws, path, content);
+        // 平台只存文本：NUL/孤立代理项会让后续快照与消息整条写库失败
+        await runtime.writeFile(ws, path, sanitizeText(content));
         return { ok: true, path, bytes: content.length };
       },
     }),
@@ -61,7 +72,12 @@ export function createTools(
         new_string: z.string(),
       }),
       execute: async ({ path, old_string, new_string }) => {
-        await runtime.editFile(ws, path, old_string, new_string);
+        await runtime.editFile(
+          ws,
+          path,
+          sanitizeText(old_string),
+          sanitizeText(new_string),
+        );
         return { ok: true, path };
       },
     }),
@@ -85,14 +101,41 @@ export function createTools(
 
         let out = '';
         let exitCode = 0;
+        // 终端输出总量上限：既限制回给模型的长度，也避免把上千个输出片段
+        // 全量堆进对话历史（线上出现过单条消息 237KB，后续请求因此变慢/报错）
+        const CAP = MAX_CMD_OUTPUT * 2;
+        let emitted = 0;
+        let emitClosed = false;
         for await (const ch of runtime.exec(ws, cmd, { signal: abortSignal })) {
           if (ch.data) {
             out += ch.data;
-            // 流给前端的终端内容同样脱敏（用户看到的不该是凭据）
-            emit?.({
-              type: 'data-command',
-              data: { cmd, stream: ch.stream, text: scrubSecrets(ch.data) },
-            });
+            if (!emitClosed) {
+              const text = sanitizeText(scrubSecrets(ch.data));
+              const rest = CAP - emitted;
+              if (text.length <= rest) {
+                emitted += text.length;
+                emit?.({
+                  type: 'data-command',
+                  data: { cmd, stream: ch.stream, text },
+                });
+              } else {
+                emitClosed = true;
+                if (rest > 0) {
+                  emit?.({
+                    type: 'data-command',
+                    data: { cmd, stream: ch.stream, text: text.slice(0, rest) },
+                  });
+                }
+                emit?.({
+                  type: 'data-command',
+                  data: {
+                    cmd,
+                    stream: ch.stream,
+                    text: `\n…（输出过长，界面不再继续显示；完整内容已按上限回传给模型）`,
+                  },
+                });
+              }
+            }
           }
           if (ch.exitCode !== undefined) exitCode = ch.exitCode;
         }
@@ -101,7 +144,7 @@ export function createTools(
         return {
           cmd,
           exitCode,
-          output: scrubSecrets(sliced),
+          output: sanitizeText(scrubSecrets(sliced)),
           ...(truncated ? { note: 'output truncated' } : {}),
         };
       },

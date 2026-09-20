@@ -124,6 +124,8 @@ export class SandboxRuntime implements Runtime {
   async snapshot(ws: Workspace): Promise<FileMap> {
     const r = await signedJson<{ files: FileMap }>(`/sandbox/${ws.id}/snapshot`, {
       method: 'POST',
+      // 快照要逐文件读取，项目大时明显超过默认 30s（线上出现过 timeout 23）
+      timeoutMs: 120_000,
     });
     return r.files;
   }

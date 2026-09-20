@@ -146,6 +146,22 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ title }),
     }).then((r) => ({ project: normalizeProject(r.project) })),
+  /** 每项目的 Agent 设置（最大步数可改）+ 模型上下文窗口 */
+  projectAgent: (id: string) =>
+    req<{
+      maxSteps: number;
+      defaultMaxSteps: number;
+      minSteps: number;
+      maxStepsLimit: number;
+      model: string;
+      contextLimit: number;
+      contextLimitKnown: boolean;
+    }>(`/api/projects/${id}/agent`),
+  updateProjectAgent: (id: string, maxSteps: number) =>
+    req<{ maxSteps: number }>(`/api/projects/${id}/agent`, {
+      method: 'PATCH',
+      body: JSON.stringify({ maxSteps }),
+    }),
   getProject: (id: string) =>
     req<{ project: RawProject }>(`/api/projects/${id}`).then((r) => ({
       project: normalizeProject(r.project),

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { isBusy } from '../agent-busy';
 import { requireUser } from '../auth';
 import { config } from '../config';
+import { getModelInfo } from '../credits/pricing';
 import { query } from '../db';
 import {
   createNode,
@@ -76,6 +77,61 @@ projectRoutes.get('/:id', async (c) => {
   const project = await ownedProject(c.req.param('id'), user.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
   return c.json({ project });
+});
+
+/** 每项目的 Agent 设置：最大步数（用户可配）+ 模型上下文窗口（给前端算上下文用量） */
+const MAX_STEPS_MIN = 5;
+const MAX_STEPS_MAX = 200;
+const DEFAULT_MAX_STEPS = 30;
+
+projectRoutes.get('/:id/agent', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const r = await query<{ max_steps: number }>(
+    'select max_steps from projects where id = $1 and user_id = $2',
+    [id, user.id],
+  );
+  if (!r.rowCount)
+    return c.json({ error: 'not_found', message: '项目不存在或无权访问' }, 404);
+  const info = await getModelInfo(config.llm.model);
+  return c.json({
+    maxSteps: r.rows[0].max_steps,
+    defaultMaxSteps: DEFAULT_MAX_STEPS,
+    minSteps: MAX_STEPS_MIN,
+    maxStepsLimit: MAX_STEPS_MAX,
+    model: config.llm.model,
+    contextLimit: info.contextLimit,
+    contextLimitKnown: info.known,
+  });
+});
+
+projectRoutes.patch('/:id/agent', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req
+    .json<{ maxSteps?: unknown }>()
+    .catch(() => ({}) as { maxSteps?: unknown });
+  const maxSteps = Number(body.maxSteps);
+  if (
+    !Number.isInteger(maxSteps) ||
+    maxSteps < MAX_STEPS_MIN ||
+    maxSteps > MAX_STEPS_MAX
+  ) {
+    return c.json(
+      {
+        error: 'invalid_input',
+        message: `最大步数需为 ${MAX_STEPS_MIN}~${MAX_STEPS_MAX} 之间的整数`,
+      },
+      400,
+    );
+  }
+  const r = await query(
+    'update projects set max_steps = $1, updated_at = now() where id = $2 and user_id = $3 returning max_steps',
+    [maxSteps, id, user.id],
+  );
+  if (!r.rowCount)
+    return c.json({ error: 'not_found', message: '项目不存在或无权访问' }, 404);
+  return c.json({ maxSteps });
 });
 
 /** 重命名项目 */

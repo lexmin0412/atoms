@@ -85,6 +85,48 @@ function structuredMessage(msg: string): string | null {
 /** 输入框自动增高的上限（超出后内部滚动） */
 const MAX_INPUT_HEIGHT = 160;
 
+/** token 数显示：1.2k / 1.0M */
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+/**
+ * 实时估算上下文大小（约 2.5 字符/token）。
+ * 规则与后端 `context.ts` 的裁剪保持一致（最近 2 条原样、更早的截断工具内容），
+ * 这样估算值不会离谱；每轮结束后会用服务端返回的真实 inputTokens 覆盖。
+ */
+function estimateTokens(messages: { parts?: unknown[] }[]): number {
+  const cut = Math.max(0, messages.length - 2);
+  let chars = 0;
+  messages.forEach((m, i) => {
+    const recent = i >= cut;
+    for (const raw of m.parts ?? []) {
+      const p = raw as {
+        type?: string;
+        text?: string;
+        input?: unknown;
+        output?: unknown;
+      };
+      const t = p.type ?? '';
+      if (t.startsWith('data-') || t === 'reasoning') continue;
+      if (t === 'text') {
+        chars += (p.text ?? '').length;
+        continue;
+      }
+      if (t === 'dynamic-tool' || t.startsWith('tool-')) {
+        const inp = JSON.stringify(p.input ?? {});
+        const out = JSON.stringify(p.output ?? {});
+        chars += recent
+          ? inp.length + out.length
+          : Math.min(inp.length, 1200) + Math.min(out.length, 3000);
+      }
+    }
+  });
+  return Math.round(chars / 2.5);
+}
+
 function friendlyError(msg: string): string {
   const structured = structuredMessage(msg);
   if (structured) return structured;
@@ -344,6 +386,21 @@ export default function Chat() {
   const [hasBuild, setHasBuild] = useState<boolean | null>(null);
   const [showPanel, setShowPanel] = useState(false);
   const [publishError, setPublishError] = useState('');
+  /** 该项目的 Agent 设置（最大步数可改）+ 模型上下文窗口 */
+  const [agent, setAgent] = useState<{
+    maxSteps: number;
+    defaultMaxSteps: number;
+    minSteps: number;
+    maxStepsLimit: number;
+    model: string;
+    contextLimit: number;
+    contextLimitKnown: boolean;
+  } | null>(null);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [stepsDraft, setStepsDraft] = useState('');
+  const [stepsSaving, setStepsSaving] = useState(false);
+  const [stepsNotice, setStepsNotice] = useState('');
+
   const [deploy, setDeploy] = useState<{
     status: string;
     url?: string;
@@ -535,6 +592,13 @@ export default function Chat() {
       .then((r) => setSkills(r.skills))
       .catch(() => {});
     api
+      .projectAgent(id)
+      .then((r) => {
+        setAgent(r);
+        setStepsDraft(String(r.maxSteps));
+      })
+      .catch(() => {});
+    api
       .deployment(id)
       .then((r) => {
         if (r.status && r.status !== 'none') setDeploy({ status: r.status, url: r.url });
@@ -623,6 +687,51 @@ export default function Chat() {
     setInput('');
     // 回到单行高度
     if (inputRef.current) inputRef.current.style.height = 'auto';
+  }
+
+  /** 最近一次请求的真实输入 token（服务端随结算返回，最准） */
+  const actualTokens = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const parts = (messages[i].parts ?? []) as Part[];
+      for (let j = parts.length - 1; j >= 0; j -= 1) {
+        const p = parts[j];
+        if (p.type === 'data-credits' && p.data) {
+          const d = p.data as { inputTokens?: number | null };
+          if (typeof d.inputTokens === 'number' && d.inputTokens > 0)
+            return d.inputTokens;
+        }
+      }
+    }
+    return null;
+  }, [messages]);
+  /** 生成过程中实时估算（与后端裁剪规则对齐），并取「上次真实值」为下限 */
+  const liveTokens = useMemo(
+    () => estimateTokens(messages as unknown as { parts?: unknown[] }[]),
+    [messages],
+  );
+  const ctxUsed = Math.max(actualTokens ?? 0, liveTokens);
+  const ctxLimit = agent?.contextLimit ?? 0;
+  const ctxPct = ctxLimit > 0 ? Math.min(100, Math.round((ctxUsed / ctxLimit) * 100)) : 0;
+  const ctxTone =
+    ctxPct >= 85 ? 'var(--danger)' : ctxPct >= 60 ? 'var(--warn)' : 'var(--accent)';
+
+  async function saveSteps() {
+    if (!id || !agent) return;
+    const n = Number(stepsDraft);
+    if (!Number.isInteger(n) || n < agent.minSteps || n > agent.maxStepsLimit) {
+      setStepsNotice(`请填 ${agent.minSteps}~${agent.maxStepsLimit} 之间的整数`);
+      return;
+    }
+    setStepsSaving(true);
+    try {
+      const r = await api.updateProjectAgent(id, n);
+      setAgent({ ...agent, maxSteps: r.maxSteps });
+      setStepsNotice('已保存');
+    } catch (err) {
+      setStepsNotice(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setStepsSaving(false);
+    }
   }
 
   function toggleSkill(name: string) {
@@ -959,6 +1068,104 @@ export default function Chat() {
             </span>
           )}
           <div className="ml-auto flex items-center gap-2">
+            {agent && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setContextOpen((v) => !v)}
+                  title={`上下文：${fmtTokens(ctxUsed)} / ${fmtTokens(ctxLimit)}（${ctxPct}%）`}
+                  className="border-border bg-surface hover:bg-muted flex items-center gap-1.5 rounded-xs border px-1.5 py-1 text-[11px] transition-colors"
+                >
+                  <span className="bg-border-strong relative block h-1.5 w-9 shrink-0 overflow-hidden rounded-full">
+                    <span
+                      className="absolute inset-y-0 left-0 rounded-full transition-[width]"
+                      style={{ width: `${Math.max(3, ctxPct)}%`, background: ctxTone }}
+                    />
+                  </span>
+                  <span className="tnum text-muted-foreground hidden sm:inline">
+                    {fmtTokens(ctxUsed)}/{fmtTokens(ctxLimit)}
+                  </span>
+                  <span className="tnum text-muted-foreground sm:hidden">{ctxPct}%</span>
+                </button>
+
+                {contextOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-20"
+                      onClick={() => setContextOpen(false)}
+                      aria-hidden
+                    />
+                    <div className="panel-raised absolute top-9 right-0 z-30 w-72 p-3.5">
+                      <p className="text-[12.5px] font-medium">上下文用量</p>
+                      <p className="mt-1.5 flex items-baseline gap-1.5">
+                        <span className="tnum text-[15px] font-semibold">
+                          {fmtTokens(ctxUsed)}
+                        </span>
+                        <span className="text-muted-foreground tnum text-[12px]">
+                          / {fmtTokens(ctxLimit)}（{ctxPct}%）
+                        </span>
+                      </p>
+                      <span className="bg-border-strong mt-2 block h-1.5 w-full overflow-hidden rounded-full">
+                        <span
+                          className="block h-full rounded-full transition-[width]"
+                          style={{
+                            width: `${Math.max(2, ctxPct)}%`,
+                            background: ctxTone,
+                          }}
+                        />
+                      </span>
+                      <p className="text-muted-foreground mt-2 text-[11px] leading-relaxed">
+                        这是发给模型的历史大小（平台会自动裁剪较早的工具输出，
+                        仍偏大时建议新建项目继续）。
+                        {busy ? ' 生成中为实时估算，结束后为实际值。' : ''}
+                      </p>
+                      <p className="text-muted-foreground mt-1 text-[11px]">
+                        模型：<span className="font-mono">{agent.model}</span>
+                        {!agent.contextLimitKnown && '（窗口为兜底值）'}
+                      </p>
+
+                      <div className="border-border mt-3 border-t pt-3">
+                        <p className="text-[12.5px] font-medium">最大步数</p>
+                        <p className="text-muted-foreground mt-1 text-[11px] leading-relaxed">
+                          每轮最多执行多少步工具调用；到上限会停下，可继续下一轮。
+                        </p>
+                        <div className="mt-2 flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={agent.minSteps}
+                            max={agent.maxStepsLimit}
+                            value={stepsDraft}
+                            onChange={(e) => {
+                              setStepsDraft(e.target.value);
+                              setStepsNotice('');
+                            }}
+                            className="border-border bg-surface focus:border-ring h-8 w-20 rounded-xs border px-2 text-[13px] outline-none"
+                          />
+                          <span className="text-muted-foreground text-[11px]">
+                            {agent.minSteps}~{agent.maxStepsLimit}（默认{' '}
+                            {agent.defaultMaxSteps}）
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            className="ml-auto"
+                            loading={stepsSaving}
+                            onClick={saveSteps}
+                          >
+                            保存
+                          </Button>
+                        </div>
+                        {stepsNotice && (
+                          <p className="text-muted-foreground mt-1.5 text-[11px]">
+                            {stepsNotice}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             <CreditsBadge />
             <Button
               size="sm"

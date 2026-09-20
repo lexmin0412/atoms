@@ -259,6 +259,22 @@ PUT/DELETE /api/skills/:id           改 / 删
 - `/chat` 走 SSE；nginx 必须关 buffering。
 - 额度：按积分（token 计量，见 `credits/`）；另有输入长度上限（4000 字）。
 
+**上下文管理（决定长对话能不能跑下去）**：
+- **裁剪**（`apps/api/src/context.ts`）：最近 2 条消息原样送给模型，更早的截断工具入参（600 字）
+  与输出（1500 字），并丢弃 UI-only 的 `data-*` 与思考过程；**绝不拆散工具调用与结果**
+  （拆了上游会报「缺少工具结果」）。实测把 542KB 的历史压到 191KB（-65%）。
+  不裁剪会让单轮上下文涨到 200k+ tokens，上游频繁断流（表现为「生成到一半自己停了」）。
+- **写入限流**：`read_file` 单次最多回 24k 字符；终端输出回传/落库限 16k。
+- **NUL 清洗**：Postgres 的 text/jsonb 存不了 `0x00`，终端输出与文件里可能有 →
+  统一经 `sanitizeText`（去 NUL 与孤立代理项）再写库/回模型；消息零件要**在 JSON.stringify 之前
+  深度清洗**（转义后洗不掉）。
+- **可观测**：每轮打印「上下文 N 条 X 字 → 送模型 Y 字（裁剪 Z%）」；达到步数上限会记录日志。
+
+**Agent 设置（每项目）**：`projects.max_steps`（默认 30，可 5~200）由用户在对话头部
+「上下文」面板里调整；`GET/PATCH /api/projects/:id/agent` 读写。
+面板同时显示 **上下文用量** `[当前使用]/[模型窗口]`：窗口来自 models.dev（可用
+`MODEL_CONTEXT_LIMIT` 覆盖），当前值取上一轮真实 `inputTokens`，生成中按同规则实时估算。
+
 **统一错误契约**（异常状态对外的一致行为）：
 - 所有错误响应都是 JSON `{ error, message }`；`app.onError` / `app.notFound` 兜底（默认实现会返回纯文本 `Internal Server Error`，前端只能显示「HTTP 500」且日志不过脱敏）。
 - `message` 一定是**面向用户的中文可操作文案**；内部细节（沙箱路径、上游响应体、SQL、容器 IP）只进 `logErr`，绝不回传。

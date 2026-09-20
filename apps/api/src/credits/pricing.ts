@@ -41,6 +41,18 @@ export interface Usage {
 
 let memory: { at: number; data: unknown } | null = null;
 
+/** 取不到 models.dev 时的兜底上下文窗口 */
+const FALLBACK_CONTEXT_LIMIT = 128_000;
+
+export interface ModelInfo {
+  /** 模型上下文窗口（token） */
+  contextLimit: number;
+  /** 单次最大输出（token，仅展示用，可能为 0 表示未知） */
+  outputLimit: number;
+  /** 是否来自 models.dev 的真实数据 */
+  known: boolean;
+}
+
 function loadDisk(): { at: number; data: unknown } | null {
   try {
     const raw = JSON.parse(readFileSync(CACHE_FILE, 'utf8')) as {
@@ -173,4 +185,30 @@ export function displayCredits(n: number): string {
 
 export function currentModel(): string {
   return config.llm.model;
+}
+
+/**
+ * 模型上下文窗口（给前端的「上下文用量」用）。
+ * 优先环境变量 MODEL_CONTEXT_LIMIT（网关可能小于 models.dev 的标称值），
+ * 其次 models.dev 的 limit.context，最后兜底值。
+ */
+export async function getModelInfo(
+  model: string,
+  provider = 'opencode-go',
+): Promise<ModelInfo> {
+  const data = (await loadModels()) as Record<
+    string,
+    { models?: Record<string, { limit?: { context?: number; output?: number } }> }
+  > | null;
+  const limit = data?.[provider]?.models?.[model]?.limit;
+  const envLimit = Number(process.env.MODEL_CONTEXT_LIMIT);
+  const contextLimit =
+    Number.isFinite(envLimit) && envLimit > 0
+      ? envLimit
+      : (limit?.context ?? FALLBACK_CONTEXT_LIMIT);
+  return {
+    contextLimit,
+    outputLimit: limit?.output ?? 0,
+    known: Boolean(limit?.context) || (Number.isFinite(envLimit) && envLimit > 0),
+  };
 }

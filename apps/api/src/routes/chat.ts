@@ -1,7 +1,6 @@
 import {
   streamText,
   convertToModelMessages,
-  stepCountIs,
   createUIMessageStream,
   createUIMessageStreamResponse,
   type LanguageModelUsage,
@@ -13,10 +12,17 @@ import { model, SYSTEM_PROMPT } from '../agent';
 import { clearBusy, markBusy } from '../agent-busy';
 import { requireUser } from '../auth';
 import { config } from '../config';
+import { pruneForModel } from '../context';
 import { currentPeriod, ensureGrant, spend } from '../credits';
-import { computeCredits, getRates, pickUsage, roundCredits } from '../credits/pricing';
+import {
+  computeCredits,
+  getModelInfo,
+  getRates,
+  pickUsage,
+  roundCredits,
+} from '../credits/pricing';
 import { query } from '../db';
-import { logErr } from '../redact';
+import { logErr, sanitizeText } from '../redact';
 import { fail } from '../respond';
 import { getRuntime } from '../runtime';
 import { acquireWorkspace, snapshotProject } from '../runtime/manager';
@@ -24,9 +30,24 @@ import { resolveSkills, skillsBrief, type ResolvedSkill } from '../skills';
 import { createTools } from '../tools';
 import type { Env } from './auth';
 
+/** 单轮最多跑多少步（含工具往返）；到顶会停下并记录日志，用户可继续下一轮 */
+const MAX_STEPS = 30;
+
 export const chatRoutes = new Hono<Env>();
 
 chatRoutes.use('*', requireUser);
+
+/** 递归清洗对象里所有字符串（NUL / 孤立代理项会让 jsonb 写入整条失败） */
+function sanitizeDeep(value: unknown): unknown {
+  if (typeof value === 'string') return sanitizeText(value);
+  if (Array.isArray(value)) return value.map(sanitizeDeep);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) out[k] = sanitizeDeep(v);
+    return out;
+  }
+  return value;
+}
 
 async function saveMessage(
   projectId: string,
@@ -39,6 +60,10 @@ async function saveMessage(
     'select coalesce(max(seq), 0) + 1 as next from messages where project_id = $1',
     [projectId],
   );
+  // 双保险：parts 里可能夹带工具输出中的 NUL/孤立代理项。
+  // 注意必须在 stringify **之前**深度清洗 —— JSON.stringify 会把 NUL 转义成
+  // 字面量 `\u0000`，事后对字符串做替换是抓不到的（jsonb 解析时才会报错）。
+  const json = JSON.stringify(sanitizeDeep(parts ?? []));
   await query(
     `insert into messages (project_id, seq, role, parts, credits, skills)
      values ($1, $2, $3, $4, $5, $6)`,
@@ -46,7 +71,7 @@ async function saveMessage(
       projectId,
       r.rows[0].next,
       role,
-      JSON.stringify(parts),
+      json,
       credits ?? null,
       skills?.length ? skills : null,
     ],
@@ -82,11 +107,13 @@ chatRoutes.post('/:id/chat', async (c) => {
   const user = c.get('user');
   const projectId = c.req.param('id');
 
-  const own = await query('select 1 from projects where id = $1 and user_id = $2', [
-    projectId,
-    user.id,
-  ]);
+  const own = await query<{ max_steps: number }>(
+    'select max_steps from projects where id = $1 and user_id = $2',
+    [projectId, user.id],
+  );
   if (!own.rowCount) return c.json({ error: 'not_found' }, 404);
+  // 每项目可配（默认 30），见 GET/PATCH /api/projects/:id/agent
+  const maxSteps = own.rows[0]?.max_steps ?? MAX_STEPS;
 
   // credits：先按周期发放，再校验余额（余额 ≤ 0 直接拒绝）
   const balance = await ensureGrant(user.id);
@@ -166,6 +193,9 @@ chatRoutes.post('/:id/chat', async (c) => {
   // 结算（一次性，onEnd / onError 都可能触发，用 memo 防重复扣）
   let usagePromise: PromiseLike<LanguageModelUsage> | null = null;
   let budgetExceeded = false;
+  /** 本轮实际输入 token（前端「上下文用量」显示这个数） */
+  let inputTokens: number | null = null;
+  let contextLimit = 0;
   let settledCredits: number | null = null;
   let settling: Promise<number> | null = null;
 
@@ -183,6 +213,7 @@ chatRoutes.post('/:id/chat', async (c) => {
         }
         const picked = pickUsage(total, steps);
         if (!picked) return 0;
+        inputTokens = picked.usage.inputTokens ?? null;
         if (picked.source === 'steps') {
           console.warn(
             `[chat] 用「已完成步」兜底结算：${steps.count} 步 / in ${steps.input} / out ${steps.output}`,
@@ -212,17 +243,36 @@ chatRoutes.post('/:id/chat', async (c) => {
         projectId,
       });
 
+      contextLimit = (await getModelInfo(config.llm.model)).contextLimit;
+      const pruned = pruneForModel(withSkillContext(uiMessages, selected));
+      const rawChars = JSON.stringify(uiMessages).length;
+      const sentChars = JSON.stringify(pruned).length;
+      console.log(
+        `[chat] 上下文 ${projectId}: ${uiMessages.length} 条消息 ${rawChars} 字 → 送模型 ${sentChars} 字` +
+          (sentChars < rawChars
+            ? `（裁剪 ${Math.round((1 - sentChars / rawChars) * 100)}%）`
+            : ''),
+      );
+
       const result = streamText({
         model,
         system,
         // 客户端断开（点「停止」/关页面）→ 立刻停止生成与工具执行，
         // 否则服务端会继续烧 token、继续占用沙箱（曾导致并发池被占满、后续消息全部失败）
         abortSignal: c.req.raw.signal,
-        messages: await convertToModelMessages(withSkillContext(uiMessages, selected)),
+        messages: await convertToModelMessages(pruned),
         tools,
         // 逐步检查：累计消耗达到起始余额即优雅停止本轮循环
         stopWhen: [
-          stepCountIs(30),
+          ({ steps }) => {
+            if (steps.length >= maxSteps) {
+              console.log(
+                `[chat] 达到步数上限 ${maxSteps}，停止本轮 ${projectId}（下一轮可继续；用户可在项目里调大）`,
+              );
+              return true;
+            }
+            return false;
+          },
           ({ steps }) => {
             const used = roundCredits(
               steps.reduce((sum, s) => sum + computeCredits(s.usage, rates), 0),
@@ -275,6 +325,10 @@ chatRoutes.post('/:id/chat', async (c) => {
                 credits: settledCredits,
                 ...(remaining === null ? {} : { balance: remaining }),
                 budgetExceeded,
+                // 前端据此显示「上下文 x/y」：本轮实际输入 token + 模型窗口
+                inputTokens,
+                contextLimit,
+                maxSteps,
               },
             } as never);
           } catch {
@@ -287,7 +341,7 @@ chatRoutes.post('/:id/chat', async (c) => {
       const assistant = messages[messages.length - 1];
       if (assistant && assistant.role === 'assistant') {
         await saveMessage(projectId, 'assistant', assistant.parts, settledCredits).catch(
-          (err) => logErr('[chat] save message error:', err),
+          (err) => logErr(`[chat] 保存消息失败 ${projectId}:`, err),
         );
       }
       try {
@@ -306,7 +360,18 @@ chatRoutes.post('/:id/chat', async (c) => {
       if (aborted) {
         console.log(`[chat] 客户端中止生成 ${projectId}（已结算并停止工具执行）`);
       } else {
-        logErr('[chat] stream error:', err);
+        logErr(`[chat] stream error ${projectId}:`, err);
+        const e = err as {
+          statusCode?: number;
+          responseBody?: string;
+          cause?: unknown;
+        };
+        if (e.statusCode || e.responseBody || e.cause) {
+          logErr(
+            `[chat] 上游详情 ${projectId}:`,
+            `status=${e.statusCode ?? '-'} body=${String(e.responseBody ?? '').slice(0, 300)} cause=${String(e.cause ?? '').slice(0, 200)}`,
+          );
+        }
       }
       clearBusy(projectId);
       // 上游中断也要按实际用量结算（若 onEnd 未触发）
