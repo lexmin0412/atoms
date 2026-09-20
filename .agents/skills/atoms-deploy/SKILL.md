@@ -156,6 +156,20 @@ ssh ... ubuntu@<B_HOST> 'cd <B_REPO> && docker build -t atoms-sandbox:latest doc
   （独立链 `ATOMS_EGRESS` 挂在 `DOCKER-USER` 上；只放行 DNS/80/443 + 到 A 的 9688，其余 DROP 并打日志 `atoms-egress-drop:`）。
 - 改完用一次性容器验证：443 与 A:9688 通、22/3306 被丢、容器内 `pnpm install` 正常。
 
+## 运维自动化（已配置，重装时照做）
+
+```bash
+# A 机
+sudo env PATH=$PATH pm2 startup systemd -u ubuntu --hp /home/ubuntu   # 开机自启
+pm2 save
+cp deploy/scripts/atoms-backup.sh deploy/scripts/atoms-watchdog.sh ~/bin/ && chmod +x ~/bin/atoms-*.sh
+crontab -e   # 追加：每天 03:10 备份、每分钟巡检
+#   10 3 * * * /home/ubuntu/bin/atoms-backup.sh >> /home/ubuntu/backups/atoms/backup.log 2>&1
+#   * * * * * /home/ubuntu/bin/atoms-watchdog.sh
+```
+
+细节与排查手册见 `docs/operations.md`。
+
 ## 验证与健康检查
 
 ```bash

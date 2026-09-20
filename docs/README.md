@@ -54,6 +54,7 @@ docs/
 - [architecture.md](./architecture.md)：系统架构（权威来源）
 - [roadmap.md](./roadmap.md)：路线图与已知限制
 - [security-audit.md](./security-audit.md)：安全专项审计（问题、证据、修复方向）
+- [operations.md](./operations.md)：运维与稳定性（巡检、备份、排查顺序）
 - [iterations/](./iterations/)：每次迭代的方案与完成情况
 - [../README.md](../README.md)：项目介绍与上手
 - [../AGENTS.md](../AGENTS.md)：面向 AI/协作者的开发约定
