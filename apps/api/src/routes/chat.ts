@@ -16,6 +16,7 @@ import { config } from '../config';
 import { currentPeriod, ensureGrant, spend } from '../credits';
 import { computeCredits, getRates, pickUsage, roundCredits } from '../credits/pricing';
 import { query } from '../db';
+import { logErr } from '../redact';
 import { getRuntime } from '../runtime';
 import { acquireWorkspace, snapshotProject } from '../runtime/manager';
 import { createTools } from '../tools';
@@ -135,7 +136,7 @@ chatRoutes.post('/:id/chat', async (c) => {
         });
         return credits;
       } catch (err) {
-        console.error('[chat] credits 结算失败:', err);
+        logErr('[chat] credits 结算失败:', err);
         return 0;
       }
     })();
@@ -178,7 +179,7 @@ chatRoutes.post('/:id/chat', async (c) => {
           steps.cacheWrite += usage.inputTokenDetails?.cacheWriteTokens ?? 0;
         },
         onError: ({ error }) => {
-          console.error('[chat] stream error:', error);
+          logErr('[chat] stream error:', error);
         },
       });
       // AI SDK v7：`usage` 即「多步之和」（totalUsage 已废弃，是它的别名）
@@ -212,22 +213,22 @@ chatRoutes.post('/:id/chat', async (c) => {
       const assistant = messages[messages.length - 1];
       if (assistant && assistant.role === 'assistant') {
         await saveMessage(projectId, 'assistant', assistant.parts, settledCredits).catch(
-          (err) => console.error('[chat] save message error:', err),
+          (err) => logErr('[chat] save message error:', err),
         );
       }
       try {
         await snapshotProject(projectId);
       } catch (err) {
-        console.error('[chat] snapshot error:', err);
+        logErr('[chat] snapshot error:', err);
       }
       await query('update projects set updated_at = now() where id = $1', [projectId]);
       clearBusy(projectId);
     },
     onError: (err) => {
-      console.error('[chat] stream error:', err);
+      logErr('[chat] stream error:', err);
       clearBusy(projectId);
       // 上游中断也要按实际用量结算（若 onEnd 未触发）
-      settle().catch((e) => console.error('[chat] 中断结算失败:', e));
+      settle().catch((e) => logErr('[chat] 中断结算失败:', e));
       // 上游中断时 onEnd 的快照可能早于工具写入完成 —— 延迟再补一次，
       // 否则这一轮写进沙箱的文件会没落库（表现为文件树为空）。
       setTimeout(() => {
@@ -237,7 +238,7 @@ chatRoutes.post('/:id/chat', async (c) => {
               `[chat] 中断补偿快照 ${projectId}: ${Object.keys(f).length} 个文件`,
             ),
           )
-          .catch((e) => console.error('[chat] 中断补偿快照失败:', e));
+          .catch((e) => logErr('[chat] 中断补偿快照失败:', e));
       }, 3000);
       const msg = err instanceof Error ? err.message : String(err);
       if (/MissingSessionID|401|403/i.test(msg)) {

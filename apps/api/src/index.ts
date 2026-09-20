@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 
 import { config } from './config';
+import { originGuard } from './origin';
 import { authRoutes } from './routes/auth';
 import { chatRoutes } from './routes/chat';
 import { creditRoutes } from './routes/credits';
@@ -11,6 +12,9 @@ import { projectRoutes } from './routes/projects';
 const app = new Hono();
 
 app.get('/api/health', (c) => c.json({ ok: true }));
+
+// 状态变更请求的显式来源校验（CSRF 纵深防御）
+app.use('/api/*', originGuard);
 app.route('/api/auth', authRoutes);
 app.route('/api/credits', creditRoutes);
 app.route('/api/projects', projectRoutes);

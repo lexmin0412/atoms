@@ -95,10 +95,32 @@ ssh ... ubuntu@<B_HOST> 'cd <B_REPO> && docker build -t atoms-sandbox:latest doc
 18. **dev app 是独立容器**（`atoms-devapp-<id>`，挂载同一开发工作区）。它**不受开发沙箱回收器管辖**——回收/销毁开发沙箱时必须一并 `stopDevApp(id)`，否则容器泄漏、且删工作区会影响其挂载。
 19. **改迁移/表结构后 B 上旧的沙箱工作区仍是旧文件**：A 的 `open` 会先列出沙箱文件、删掉 DB 里不存在的再写入（自愈）。所以**同步失败不要吞掉**。
 20. **`pnpm install` 在 A 上会提示 build scripts 被忽略**：正常（根 `.npmrc` 已放行），只要目标依赖目录存在即可。
+21b. **应用库需要 `CREATEROLE`**：每项目独立数据库角色（`r_p<uuid>_{dev|prod}`）由 API 在运行时创建，
+    管理角色必须是 `CREATEROLE`（`sudo -u postgres psql -d atoms -c 'alter role atoms createrole;'`），
+    否则 `db:init` 会在「项目数据库角色」步骤报 `Only roles with the CREATEROLE attribute may create roles`。
+    `db:init` 会为所有已存在 schema 回填角色（幂等）。
+21c. **轮换数据库密码后要重建存量容器**：容器的连接串在启动时注入，改密码后旧容器会在重连时失败 ——
+    用 `app_releases` 里 `db_schema is not null` 的记录重建发布容器，devapp/dev 沙箱会按需自动重建。
 21. **credits 环境变量只在服务端 `.env`**：`CREDITS_MONTHLY_GRANT`（默认 500）、`APPS_DOMAIN`（发布/预览域名）。**改 schema/加表后必须先 rsync 再 `db:init`**。
 22. **没有公网管理入口**：手动调额/查系统额度用 A 机本地 CLI —— `pnpm --filter @atoms/api credits grant|list|usage`。
 23. **定价依赖 models.dev**：拉不到会回退内置兜底费率（日志里会 warn），不阻塞聊天。`.cache/` 已 gitignore。
 24. **`rsync` 多个源文件 + 目录目标会把路径拍平**：`rsync a/b/package.json package.json host:~/repo/` 会把 `apps/api/package.json` 覆盖到仓库根。多文件替换必须逐条指定**完整目标路径**。
+
+## 安全加固（迭代 007，重建服务器时照做）
+
+**A 机**
+- SSH 只允许密钥：`/etc/ssh/sshd_config.d/49-atoms-hardening.conf` 写
+  `PermitRootLogin prohibit-password` + `PasswordAuthentication no` + `KbdInteractiveAuthentication no`，
+  然后 `sshd -t && systemctl reload ssh`。
+  ⚠️ **文件名必须排在 `50-cloud-init.conf` 之前**（sshd 取**首个**匹配值）；叫 `99-*` 会被 cloud-init 的 `yes` 压住。
+- ufw：`allow 22,80,443` + 其它在跑的项目端口；**9688 只允许 B 机与办公网段**（`ufw allow from <ip> to any port 9688 proto tcp`）；
+  `ufw --force enable` 前务必先放行 22，否则会被锁在外。
+- Postgres 角色需要 `CREATEROLE`（见 21b）。
+
+**B 机**
+- 沙箱容器出网白名单：`/usr/local/sbin/atoms-sandbox-egress.sh` + systemd `atoms-egress.service`
+  （独立链 `ATOMS_EGRESS` 挂在 `DOCKER-USER` 上；只放行 DNS/80/443 + 到 A 的 9688，其余 DROP 并打日志 `atoms-egress-drop:`）。
+- 改完用一次性容器验证：443 与 A:9688 通、22/3306 被丢、容器内 `pnpm install` 正常。
 
 ## 验证与健康检查
 

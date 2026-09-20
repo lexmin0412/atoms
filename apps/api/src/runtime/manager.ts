@@ -1,6 +1,7 @@
 import type { FileMap, Workspace } from '@atoms/shared';
 
 import { loadFileMap, saveFileMap } from '../filetree';
+import { logErr } from '../redact';
 import { ensureDevSchema, databaseUrlFor } from '../release/db';
 import { getRuntime } from './index';
 
@@ -19,7 +20,7 @@ export async function loadProjectFiles(projectId: string): Promise<FileMap> {
 /** 开发沙箱连的是 dev_<短id>，与生产的 app_<短id> 隔离 */
 async function devDatabaseUrl(projectId: string): Promise<string> {
   const schema = await ensureDevSchema(projectId);
-  return databaseUrlFor(schema);
+  return await databaseUrlFor(schema);
 }
 
 export async function acquireWorkspace(projectId: string): Promise<Workspace> {
@@ -81,13 +82,13 @@ export async function withWorkspace(
     const ws = await acquireWorkspace(projectId);
     await fn(rt, ws);
   } catch (err) {
-    console.error('[workspace] sync failed, will resync from DB:', err);
+    logErr('[workspace] sync failed, will resync from DB:', err);
     cache.delete(projectId);
     try {
       const ws = await acquireWorkspace(projectId);
       await fn(rt, ws);
     } catch (retryErr) {
-      console.error('[workspace] resync failed (DB 仍为事实源):', retryErr);
+      logErr('[workspace] resync failed (DB 仍为事实源):', retryErr);
       cache.delete(projectId);
     }
   }

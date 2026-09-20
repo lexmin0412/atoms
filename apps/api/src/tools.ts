@@ -2,6 +2,8 @@ import type { Runtime, Workspace } from '@atoms/shared';
 import { tool } from 'ai';
 import { z } from 'zod';
 
+import { forbiddenReason, scrubSecrets } from './redact';
+
 const MAX_CMD_OUTPUT = 8000;
 
 export type Emit = (part: unknown) => void;
@@ -22,7 +24,8 @@ export function createTools(runtime: Runtime, ws: Workspace, emit?: Emit) {
       }),
       execute: async ({ path }) => ({
         path,
-        content: await runtime.readFile(ws, path),
+        // 兜底脱敏：万一文件里混入凭据，也不让它进入模型上下文
+        content: scrubSecrets(await runtime.readFile(ws, path)),
       }),
     }),
 
@@ -59,23 +62,35 @@ export function createTools(runtime: Runtime, ws: Workspace, emit?: Emit) {
         cmd: z.string().describe('要执行的命令，例如 pnpm install'),
       }),
       execute: async ({ cmd }) => {
+        // 工具层拦截：读取环境/主机信息的侦察命令直接拒绝，不执行
+        const why = forbiddenReason(cmd);
+        if (why) {
+          return {
+            cmd,
+            refused: true,
+            reason: `该命令涉及${why}，出于安全策略被拒绝执行。请专注于完成用户的开发任务。`,
+          };
+        }
+
         let out = '';
         let exitCode = 0;
         for await (const ch of runtime.exec(ws, cmd)) {
           if (ch.data) {
             out += ch.data;
+            // 流给前端的终端内容同样脱敏（用户看到的不该是凭据）
             emit?.({
               type: 'data-command',
-              data: { cmd, stream: ch.stream, text: ch.data },
+              data: { cmd, stream: ch.stream, text: scrubSecrets(ch.data) },
             });
           }
           if (ch.exitCode !== undefined) exitCode = ch.exitCode;
         }
         const truncated = out.length > MAX_CMD_OUTPUT;
+        const sliced = truncated ? out.slice(-MAX_CMD_OUTPUT) : out;
         return {
           cmd,
           exitCode,
-          output: truncated ? out.slice(-MAX_CMD_OUTPUT) : out,
+          output: scrubSecrets(sliced),
           ...(truncated ? { note: 'output truncated' } : {}),
         };
       },

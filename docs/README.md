@@ -9,6 +9,7 @@ docs/
 ├─ README.md                 # 本文件：索引与约定
 ├─ architecture.md           # 系统架构（长期，持续更新）
 ├─ roadmap.md                # 路线图与已知限制（长期，滚动更新）
+├─ security-audit.md         # 安全专项审计（滚动更新：发现 → 修复状态）
 └─ iterations/               # 每次迭代一份方案文档（append-only）
    ├─ 000-template.md        # 方案模板（复制它开新迭代）
    └─ 001-*.md               # 第 N 次迭代
@@ -52,6 +53,7 @@ docs/
 
 - [architecture.md](./architecture.md)：系统架构（权威来源）
 - [roadmap.md](./roadmap.md)：路线图与已知限制
+- [security-audit.md](./security-audit.md)：安全专项审计（问题、证据、修复方向）
 - [iterations/](./iterations/)：每次迭代的方案与完成情况
 - [../README.md](../README.md)：项目介绍与上手
 - [../AGENTS.md](../AGENTS.md)：面向 AI/协作者的开发约定

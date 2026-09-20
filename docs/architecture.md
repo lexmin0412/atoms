@@ -166,6 +166,17 @@ files (id, project_id, pid, name, type['file'|'dir'], path, content, version, up
 - **运维**：不提供公网管理入口。手动调额与系统额度查看走 A 机本地 CLI：
   `pnpm --filter @atoms/api credits grant --email <email> --amount <n> --note <备注>`、`credits list --email <email>`、`credits usage`。
 
+### 安全基线（迭代 007）
+
+| 面 | 措施 |
+|---|---|
+| **数据隔离** | 每项目独立 DB 角色（见上），容器凭据无跨租户能力 |
+| **提示词/宿主信息** | 提示词硬约束 + 工具层拦截侦察命令 + 工具输出脱敏（`redact.ts`） |
+| **不可信内容** | 用户产物只走独立子域（`dev-<id>` / `<id>`）；平台域不再代理用户 dist；`/icon` 加 nosniff + CSP sandbox + attachment |
+| **认证** | 登录/注册按 IP+账号限流（指数退避）；密码 ≥10 位 + 弱口令黑名单；会话 7 天、登出吊销；显式 Origin 校验 |
+| **主机** | A：SSH 仅密钥、ufw 白名单、Postgres 端口仅 B 机与办公网段可达；B：沙箱容器出网白名单（DNS/80/443 + A 的 DB 端口） |
+| **响应头** | 平台页 `X-Frame-Options` / `nosniff` / `Referrer-Policy` / `Permissions-Policy` / CSP |
+
 ### 数据库迁移（强约束）
 **任何 schema 变更都必须带迁移，且能处理线上已有数据。**
 `apps/api/src/migrations/<NNNN>-<name>.sql`，序号递增、只增不改、幂等；`schema_migrations` 记录已执行项；`db:init` 负责执行。
@@ -180,6 +191,12 @@ files (id, project_id, pid, name, type['file'|'dir'], path, content, version, up
 | 应用库（`atoms_apps`） | 各用户项目的业务 schema | 应用池（开发沙箱 / 发布容器）、只读池 |
 
 **schema 命名**：`p{projectId}_{dev|prod}`（完整 projectId → 零碰撞；长度 ~41，低于 63 字节上限）
+
+**每项目独立数据库角色**（安全边界，迭代 007）：每个 schema 配一个登录角色 `r_p{projectId}_{dev|prod}`，
+凭据存平台库 `project_db_roles`。角色**不拥有 schema**，只被授予本 schema 的 `usage/create` + 表/序列增删改查
+（`alter default privileges` 覆盖后续建的表），并 `revoke usage on schema public`。
+`databaseUrlFor()` 用该角色拼连接串 —— 容器（开发沙箱 / devapp / 发布容器）即使读到 `DATABASE_URL`，
+也**只能访问自己项目的 schema**。前置：管理角色需 `CREATEROLE`。
 - `_dev`：开发沙箱（Agent 边写边跑，可随意折腾）
 - `_prod`：发布容器（数据受保护；发布时从空开始）
 - 数据库查看器分「开发 / 生产」，**仅当该 schema 有业务表时才显示入口**

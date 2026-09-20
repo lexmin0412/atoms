@@ -14,6 +14,7 @@ import {
   renameNode,
   updateFile,
 } from '../filetree';
+import { logErr } from '../redact';
 import { ensureAppSchema, ensureDevSchema, databaseUrlFor } from '../release/db';
 import { publishFrontend } from '../release/frontend';
 import { getRuntime, getSandboxRuntime } from '../runtime';
@@ -158,7 +159,7 @@ function fsError(c: Context<Env>, err: unknown): Response {
   if (msg === 'parent_not_found' || msg === 'parent_not_dir') {
     return c.json({ error: msg, message: '父目录无效' }, 400);
   }
-  console.error('[fs] error:', err);
+  logErr('[fs] error:', err);
   return c.json({ error: 'fs_failed', message: msg }, 500);
 }
 
@@ -332,7 +333,7 @@ projectRoutes.post('/:id/rebuild', async (c) => {
       method: 'GET',
     }).catch(() => ({ files: [] as string[] }));
     if (listing.files.some((f) => f.startsWith('apps/api/'))) {
-      await rt.restartDevApp(id, databaseUrlFor(schema));
+      await rt.restartDevApp(id, await databaseUrlFor(schema));
     }
     return c.json({ ok: true, log: log.join('').slice(-4000) });
   } catch (err) {
@@ -359,33 +360,14 @@ projectRoutes.get('/:id/icon', async (c) => {
     headers: {
       'Content-Type': 'image/svg+xml; charset=utf-8',
       'Cache-Control': 'private, max-age=60',
+      // 用户可控内容：禁止嗅探、禁止脚本执行、禁止被当作文档内联渲染
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      'Content-Disposition': 'attachment; filename="icon.svg"',
     },
   });
 });
 
-/** 预览：把沙箱里 apps/web/dist 的静态产物代理出来（同源 iframe 展示） */
-async function servePreview(c: Context<Env>) {
-  const user = c.get('user');
-  const id = c.req.param('id');
-  if (!id) return c.json({ error: 'id_required' }, 400);
-  const project = await ownedProject(id, user.id);
-  if (!project) return c.json({ error: 'not_found' }, 404);
-  const url = new URL(c.req.url);
-  const prefix = `/api/projects/${id}/preview/`;
-  const rel = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : '';
-  const res = await signedFetch(`/sandbox/${id}/preview/${rel}`, { method: 'GET' });
-  const body = await res.arrayBuffer();
-  const ct = res.headers.get('content-type') ?? 'application/octet-stream';
-  return new Response(body, {
-    status: res.status,
-    headers: { 'Content-Type': ct, 'Cache-Control': 'no-store' },
-  });
-}
-
-projectRoutes.get('/:id/preview', servePreview);
-projectRoutes.get('/:id/preview/*', servePreview);
-
-/** 预览地址（独立子域，避免 /api 落到平台） */
 projectRoutes.get('/:id/preview-url', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -414,7 +396,7 @@ projectRoutes.post('/:id/devapp', async (c) => {
   // 先确保开发沙箱存在（可能已被空闲回收）
   await acquireWorkspace(id).catch(() => {});
   await getSandboxRuntime()
-    .startDevApp(id, databaseUrlFor(schema))
+    .startDevApp(id, await databaseUrlFor(schema))
     .catch(() => {});
   // 容器内需 install + 启动，给一点时间后再探测
   await new Promise((r) => setTimeout(r, 1500));
@@ -488,7 +470,7 @@ projectRoutes.post('/:id/publish', async (c) => {
     schema = await ensureAppSchema(id);
     try {
       await rt.stopRelease(id);
-      await rt.startRelease(id, databaseUrlFor(schema));
+      await rt.startRelease(id, await databaseUrlFor(schema));
       status = 'starting';
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';

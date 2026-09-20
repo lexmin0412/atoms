@@ -24,7 +24,7 @@ export function verifyPassword(pw: string, stored: string): boolean {
 
 export async function createSession(userId: string): Promise<string> {
   const token = randomBytes(32).toString('hex');
-  const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000);
+  const expires = new Date(Date.now() + 7 * 24 * 3600 * 1000);
   await query('insert into sessions (user_id, token, expires_at) values ($1, $2, $3)', [
     userId,
     token,
@@ -39,7 +39,7 @@ export function setSessionCookie(c: Context, token: string) {
     path: '/',
     sameSite: 'Lax',
     secure: IS_PROD,
-    maxAge: 30 * 24 * 3600,
+    maxAge: 7 * 24 * 3600,
   });
 }
 
