@@ -17,8 +17,8 @@ const VARIANT: Record<Variant, string> = {
 
 const SIZE: Record<Size, string> = {
   // 移动端加大触控高度（>=36px），lg 起回到紧凑尺寸
-  sm: 'h-9 px-3 text-[13px] gap-1.5 rounded-xs lg:h-7 lg:px-2.5 lg:text-[12.5px]',
-  md: 'h-10 px-4 text-[13.5px] gap-2 rounded-sm lg:h-9 lg:px-3.5',
+  sm: 'h-9 px-3 text-[13px] gap-1.5 rounded-xs sm:h-7 sm:px-2.5 sm:text-[12.5px]',
+  md: 'h-10 px-4 text-[13.5px] gap-2 rounded-sm sm:h-9 sm:px-3.5',
 };
 
 export function Button({

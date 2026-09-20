@@ -127,7 +127,7 @@
    * 移动端表单控件字号一律 ≥16px：iOS 上 <16px 时聚焦会强制放大整页，
    * 导致布局被顶乱（桌面端保持原有密度）。
    */
-  @media (max-width: 1023px) {
+  @media (max-width: 639px) {
     input,
     textarea,
     select {

@@ -96,7 +96,7 @@ export default function SkillView() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-start gap-3 lg:flex-nowrap">
+      <div className="flex flex-wrap items-start gap-3 sm:flex-nowrap">
         <div className="min-w-0 flex-1">
           <h1 className="text-[18px] font-semibold tracking-[-0.02em] break-words">
             {skill.name}

@@ -234,7 +234,7 @@ function MessageFooter({
         />
         Atoms
       </span>
-      <div className="flex items-center gap-0.5 opacity-100 transition-opacity lg:opacity-0 lg:group-hover/m:opacity-100 lg:focus-within:opacity-100">
+      <div className="flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/m:opacity-100 sm:focus-within:opacity-100">
         {text && (
           <button
             onClick={() => {
@@ -659,7 +659,7 @@ export default function Chat() {
         }
         style={isWide && leftWidth ? { width: leftWidth } : undefined}
       >
-        <div className="border-border flex h-12 shrink-0 items-center gap-2 overflow-x-auto border-b pr-3 pl-11 lg:gap-3 lg:overflow-visible lg:pl-[calc(0.75rem+var(--nav-overlay,0px))]">
+        <div className="border-border flex h-12 shrink-0 items-center gap-2 overflow-x-auto border-b pr-3 pl-11 sm:pl-[calc(0.75rem+var(--nav-overlay,0px))] lg:gap-3 lg:overflow-visible">
           {/* 移动端：面板是全屏的，必须给一条回到聊天的路 */}
           <button
             onClick={() => setShowPanel(false)}
@@ -904,7 +904,7 @@ export default function Chat() {
         }
         style={isWide && chatWidth ? { width: chatWidth } : undefined}
       >
-        <div className="border-border flex h-12 shrink-0 items-center gap-2.5 border-b pr-3 pl-11 lg:px-3">
+        <div className="border-border flex h-12 shrink-0 items-center gap-2.5 border-b pr-3 pl-11 sm:px-3">
           <span className="truncate text-[13px] font-medium">Chat with me</span>
           {busy && (
             <span className="text-muted-foreground flex items-center gap-1.5 text-[11.5px]">
@@ -1047,13 +1047,13 @@ export default function Chat() {
                 onKeyDown={onComposerKeyDown}
                 onBlur={() => setPickerOpen(false)}
                 placeholder="描述你想创建的应用…（输入 / 可唤起技能）"
-                className="placeholder:text-muted-foreground/70 h-9 w-full bg-transparent px-0.5 text-[16px] outline-none lg:h-7 lg:text-[13px]"
+                className="placeholder:text-muted-foreground/70 h-9 w-full bg-transparent px-0.5 text-[16px] outline-none sm:h-7 sm:text-[13px]"
               />
               {pickerOpen && (
                 <div
                   // 点在弹层内不要夺走输入框焦点（否则 onBlur 会先把它关掉）
                   onMouseDown={(e) => e.preventDefault()}
-                  className="border-border bg-surface absolute bottom-11 left-0 z-20 max-h-64 w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-md border shadow-lg lg:bottom-9"
+                  className="border-border bg-surface absolute bottom-11 left-0 z-20 max-h-64 w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-md border shadow-lg sm:bottom-9"
                 >
                   {skills.length === 0 ? (
                     <p className="text-muted-foreground px-3 py-3 text-[12px]">
@@ -1140,7 +1140,7 @@ export default function Chat() {
                 type="submit"
                 disabled={busy || !input.trim()}
                 aria-label="发送"
-                className="bg-accent text-accent-foreground ml-auto grid size-10 place-items-center rounded-full transition-opacity disabled:opacity-40 lg:size-8"
+                className="bg-accent text-accent-foreground ml-auto grid size-10 place-items-center rounded-full transition-opacity disabled:opacity-40 sm:size-8"
               >
                 <svg
                   width="15"

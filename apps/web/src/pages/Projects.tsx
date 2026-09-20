@@ -286,7 +286,7 @@ export default function Projects() {
                     {fmtDate(p.updatedAt)}
                   </p>
                 </div>
-                <div className="opacity-100 transition-opacity lg:opacity-0 lg:group-hover:opacity-100">
+                <div className="opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
                   <CardMenu
                     onOpen={() => nav(`/p/${p.id}`)}
                     onRename={() => {

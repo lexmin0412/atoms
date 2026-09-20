@@ -201,7 +201,7 @@ export function AppShell({
       {/* 移动端抽屉遮罩 */}
       {drawerOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          className="fixed inset-0 z-40 bg-black/40 sm:hidden"
           onClick={() => setDrawerOpen(false)}
           aria-hidden
         />
@@ -211,10 +211,11 @@ export function AppShell({
           'border-border bg-surface flex shrink-0 flex-col border-r',
           // 移动端：抽屉（覆盖式）；桌面端：静态列（可折叠）
           'fixed inset-y-0 left-0 z-50 w-64 transition-transform duration-200',
-          'lg:static lg:z-auto lg:translate-x-0 lg:transition-[width] lg:duration-150',
-          // 关闭时用 invisible：translate 只是视觉位移，链接仍会被读屏/键盘 focus 到
+          // ≥640 恢复桌面布局：静态列、始终可见
+          'sm:visible sm:static sm:z-auto sm:translate-x-0 sm:transition-[width] sm:duration-150',
+          // 窄屏关闭时用 invisible：translate 只是视觉位移，链接仍会被读屏/键盘 focus 到
           drawerOpen ? 'visible translate-x-0' : 'invisible -translate-x-full',
-          collapsed ? 'lg:w-16' : 'lg:w-64',
+          collapsed ? 'sm:w-16' : 'sm:w-64',
         )}
       >
         <div
@@ -236,7 +237,7 @@ export function AppShell({
                 onClick={toggleCollapse}
                 aria-label="收起侧栏"
                 title="收起侧栏"
-                className="text-muted-foreground hover:bg-muted hover:text-foreground ml-auto hidden size-7 place-items-center rounded-xs transition-colors lg:grid"
+                className="text-muted-foreground hover:bg-muted hover:text-foreground ml-auto hidden size-7 place-items-center rounded-xs transition-colors sm:grid"
               >
                 <Icon name="panel" />
               </button>
@@ -244,7 +245,7 @@ export function AppShell({
                 onClick={() => setDrawerOpen(false)}
                 aria-label="关闭导航"
                 title="关闭导航"
-                className="text-muted-foreground hover:bg-muted hover:text-foreground ml-auto grid size-9 place-items-center rounded-xs transition-colors lg:hidden"
+                className="text-muted-foreground hover:bg-muted hover:text-foreground ml-auto grid size-9 place-items-center rounded-xs transition-colors sm:hidden"
               >
                 <Icon name="back" />
               </button>
@@ -277,7 +278,7 @@ export function AppShell({
               onClick={() => setDrawerOpen(false)}
               className={cx(
                 'flex items-center gap-2.5 rounded-md text-[13px] transition-colors',
-                compact ? 'justify-center px-0 py-2.5 lg:py-2' : 'px-2.5 py-2.5 lg:py-2',
+                compact ? 'justify-center px-0 py-2.5 sm:py-2' : 'px-2.5 py-2.5 sm:py-2',
                 isActive(n.to)
                   ? 'bg-muted font-medium text-foreground'
                   : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
@@ -321,7 +322,7 @@ export function AppShell({
         <div
           className={cx(
             'border-border mt-auto border-t py-2.5',
-            'pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pb-2.5',
+            'pb-[max(0.625rem,env(safe-area-inset-bottom))] sm:pb-2.5',
             compact ? 'px-2' : 'px-3',
           )}
         >
@@ -338,7 +339,7 @@ export function AppShell({
             onClick={toggleCollapse}
             aria-label="展开侧栏"
             title="展开侧栏"
-            className="panel text-muted-foreground hover:text-foreground absolute top-2.5 left-2.5 z-30 hidden size-7 place-items-center transition-colors lg:grid"
+            className="panel text-muted-foreground hover:text-foreground absolute top-2.5 left-2.5 z-30 hidden size-7 place-items-center transition-colors sm:grid"
           >
             <Icon name="panel" />
           </button>
@@ -350,7 +351,7 @@ export function AppShell({
             <button
               onClick={() => setDrawerOpen(true)}
               aria-label="打开导航"
-              className="panel text-muted-foreground hover:text-foreground absolute top-1.5 left-2 z-30 grid size-9 place-items-center transition-colors lg:hidden"
+              className="panel text-muted-foreground hover:text-foreground absolute top-1.5 left-2 z-30 grid size-9 place-items-center transition-colors sm:hidden"
             >
               <Icon name="menu" />
             </button>
@@ -359,7 +360,7 @@ export function AppShell({
         ) : (
           <>
             {/* 移动端顶部条：汉堡 + 品牌 */}
-            <header className="border-border bg-surface flex h-12 shrink-0 items-center gap-2.5 border-b px-3 lg:hidden">
+            <header className="border-border bg-surface flex h-12 shrink-0 items-center gap-2.5 border-b px-3 sm:hidden">
               <button
                 onClick={() => setDrawerOpen(true)}
                 aria-label="打开导航"
