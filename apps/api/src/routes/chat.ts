@@ -363,7 +363,7 @@ chatRoutes.post('/:id/chat', async (c) => {
         maxRetries: 2,
         headers: {
           'x-opencode-session': projectId,
-          'User-Agent': 'atoms-demo/1.0',
+          'User-Agent': 'another-atoms/1.0',
         },
         onStepFinish: ({ usage }) => {
           steps.count += 1;

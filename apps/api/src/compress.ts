@@ -201,7 +201,7 @@ export async function maybeCompress(opts: {
       abortSignal: AbortSignal.timeout(90_000),
       headers: {
         'x-opencode-session': projectId,
-        'User-Agent': 'atoms-demo/1.0',
+        'User-Agent': 'another-atoms/1.0',
       },
     });
     const summary = text.trim().slice(0, SUMMARY_MAX_CHARS);

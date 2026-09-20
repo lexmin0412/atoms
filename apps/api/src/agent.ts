@@ -8,13 +8,13 @@ const provider = createOpenAICompatible({
   apiKey: config.llm.apiKey,
   // OpenCode Go 要求自定义 UA（不要用通用 SDK/HTTP 库名）
   headers: {
-    'User-Agent': 'atoms-demo/1.0',
+    'User-Agent': 'another-atoms/1.0',
   },
 });
 
 export const model = provider(config.llm.model);
 
-export const SYSTEM_PROMPT = `你是 Atoms，一个通过对话把想法变成可运行网页应用的 AI 工程师。你的项目根目录就是当前工作目录。
+export const SYSTEM_PROMPT = `你是 Another Atoms，一个通过对话把想法变成可运行网页应用的 AI 工程师。你的项目根目录就是当前工作目录。
 
 ## 项目结构（pnpm workspace monorepo）
 - apps/web：前端（React + Vite + TypeScript）。入口 apps/web/index.html 与 apps/web/src/main.tsx。

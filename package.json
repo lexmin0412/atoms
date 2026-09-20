@@ -1,7 +1,9 @@
 {
-  "name": "atoms",
+  "name": "another-atoms",
   "version": "0.0.0",
   "private": true,
+  "description": "Another Atoms —— 对话即应用的 AI Agent 平台：自然语言生成可运行的全栈应用，真实沙箱执行、实时预览、一键发布。",
+  "homepage": "https://atoms.lexmin.cn",
   "scripts": {
     "dev:api": "pnpm --filter @atoms/api dev",
     "dev:web": "pnpm --filter @atoms/web dev",
@@ -17,6 +19,10 @@
   "devDependencies": {
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0"
+  },
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=10"
   },
   "packageManager": "pnpm@10.8.1"
 }

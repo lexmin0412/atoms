@@ -1,6 +1,6 @@
 # 运维与稳定性
 
-面向「评审/演示期间不能出意外」的最小运维手册。真实主机、密钥、域名见 `.agents/skills/atoms-deploy/local.env`（gitignored）。
+线上服务的运维手册：巡检、备份、故障排查与恢复。真实主机、密钥、域名见 `.agents/skills/atoms-deploy/local.env`（gitignored）。
 
 ## 一、当前已配置的自动保护
 
@@ -56,7 +56,7 @@ gunzip -c ~/backups/atoms/platform-<日期>.sql.gz | psql "<DATABASE_URL>"
 gunzip -c ~/backups/atoms/appdb-<日期>.sql.gz    | psql "<APP_DATABASE_URL>"
 ```
 
-## 四、已知边界（评审时可能遇到，属预期）
+## 四、已知边界（线上可能遇到，属预期）
 
 - **积分**：每月自动补满 `CREDITS_MONTHLY_GRANT`（默认 500 积分 ≈ $5 模型费用）；用尽会明确提示并说明恢复时间。
 - **并发**：同时运行的开发沙箱上限 4（2C4G 机器），超出会回收最久空闲的项目，不丢代码。
@@ -64,7 +64,7 @@ gunzip -c ~/backups/atoms/appdb-<日期>.sql.gz    | psql "<APP_DATABASE_URL>"
 - **发布数量**：常驻发布容器上限 5，超出需先下架。
 - **登录限流**：同 IP + 账号连续失败 8 次会锁 15 分钟。
 
-## 五、提交/演示前检查清单
+## 五、发布前检查清单
 
 - [ ] `curl -fsS https://<DOMAIN>/api/health` 返回 200
 - [ ] A 机 `pm2 list` 中 `atoms-api`、`atoms-tunnel` 均 online

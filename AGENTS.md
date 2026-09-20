@@ -2,7 +2,7 @@
 
 [原始需求](./demands.md)
 
-Atoms：一个「对话即应用」的 AI Agent 平台。用户用自然语言描述需求，Agent 在**真实隔离沙箱**里写文件、装依赖、构建，右侧实时预览，并可一键发布分享。
+Another Atoms：一个「对话即应用」的 AI Agent 平台。用户用自然语言描述需求，Agent 在**真实隔离沙箱**里写文件、装依赖、构建，右侧实时预览，并可一键发布分享。
 
 > 架构见 [docs/architecture.md](./docs/architecture.md)，路线图见 [docs/roadmap.md](./docs/roadmap.md)；面向人的介绍见 [README.md](./README.md)。
 

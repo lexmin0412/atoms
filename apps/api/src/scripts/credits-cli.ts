@@ -78,7 +78,7 @@ async function usage() {
   const res = await fetch(`${config.llm.baseUrl}/usage`, {
     headers: {
       Authorization: `Bearer ${config.llm.apiKey}`,
-      'User-Agent': 'atoms-demo/1.0',
+      'User-Agent': 'another-atoms/1.0',
     },
   });
   if (!res.ok) {

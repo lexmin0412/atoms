@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Atoms 巡检（A 机）：本地 API + A→B 隧道。
+# Another Atoms 巡检（A 机）：本地 API + A→B 隧道。
 # 连续两次失败才重启，避免偶发抖动打断正在进行的请求。
 # 部署：cp 到 A 机 ~/bin/atoms-watchdog.sh && chmod +x && 每分钟 cron（见 atoms-deploy 技能）
 set -uo pipefail

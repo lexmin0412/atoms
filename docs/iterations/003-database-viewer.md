@@ -82,7 +82,7 @@ GET /api/projects/:id/db/tables/:table/rows?page=1    分页行数据（每页 5
 ## 风险与取舍
 
 - 只读角色授权范围必须卡死（仅 `app_*` schema，禁平台表）。
-- 分页用 `LIMIT/OFFSET`（demo 足够；超大表后续再优化）。
+- 分页用 `LIMIT/OFFSET`（当前规模足够；超大表后续再优化）。
 - 不做自定义 SQL（范围外）。
 
 ## 完成情况

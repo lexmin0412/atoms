@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Atoms 数据库每日备份（平台库 + 应用库），保留 7 天。
+# Another Atoms 数据库每日备份（平台库 + 应用库），保留 7 天。
 # 部署：cp 到 A 机 ~/bin/atoms-backup.sh && chmod +x && 加 crontab（见 atoms-deploy 技能）
 # 恢复：gunzip -c <file>.sql.gz | psql "<DATABASE_URL>"
 set -euo pipefail

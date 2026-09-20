@@ -1,7 +1,7 @@
 ---
 name: atoms-opencode-go
 description: >
-  Atoms-Demo 里「接模型 + Agent 流式」的约定与坑：OpenCode Go（zen/go）作为 LLM 供应商，
+  Another Atoms 里「接模型 + Agent 流式」的约定与坑：OpenCode Go（zen/go）作为 LLM 供应商，
   Vercel AI SDK v7 的工具循环、流式工具输出、消息 parts。
   当需要「接/换模型」「报 MissingSessionID」「AI SDK 升级后 API 变了」「工具输出不流式」
   「实现 agent 循环 / run_command 流式」「改 chat 路由」时使用。
@@ -9,7 +9,7 @@ description: >
 tags: ["LLM", "AI-SDK", "Atoms"]
 ---
 
-# Atoms × OpenCode Go × AI SDK v7
+# Another Atoms × OpenCode Go × AI SDK v7
 
 ## OpenCode Go 接入（最容易踩的坑）
 
@@ -17,7 +17,7 @@ tags: ["LLM", "AI-SDK", "Atoms"]
 
 **原因**：Go 要求客户端自报身份。必须两个头：
 1. `x-opencode-session`：**每个会话一个稳定 id**（本项目用 `projectId`），用于路由与 prompt 缓存；
-2. `User-Agent`：自定义名（如 `atoms-demo/1.0`），**不能是通用 SDK/HTTP 库名**。
+2. `User-Agent`：自定义名（如 `another-atoms/1.0`），**不能是通用 SDK/HTTP 库名**。
 
 实现（见 `apps/api/src/agent.ts` + `routes/chat.ts`）：provider 级设 UA，逐请求设 session。
 ```ts
@@ -25,10 +25,10 @@ const provider = createOpenAICompatible({
   name: 'opencode-go',
   baseURL: 'https://opencode.ai/zen/go/v1',
   apiKey: config.llm.apiKey,
-  headers: { 'User-Agent': 'atoms-demo/1.0' },
+  headers: { 'User-Agent': 'another-atoms/1.0' },
 });
 export const model = provider('deepseek-v4.1-flash');
-// streamText({ ..., headers: { 'x-opencode-session': projectId, 'User-Agent': 'atoms-demo/1.0' } })
+// streamText({ ..., headers: { 'x-opencode-session': projectId, 'User-Agent': 'another-atoms/1.0' } })
 ```
 
 **排查习惯**：前端错误信息被 AI SDK 抹成通用文案，**真实上游报错在服务端日志**（我们打印在 `[chat] stream error:`）。遇到莫名失败先看服务端日志的 `responseBody`。

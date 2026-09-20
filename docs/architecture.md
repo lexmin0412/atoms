@@ -1,6 +1,6 @@
 # 架构
 
-> Atoms-Demo 是一个「对话即应用」的 AI Agent 平台：用自然语言描述需求，Agent 在**真实隔离沙箱**里写文件、装依赖、构建，右侧实时预览，并可一键发布分享。
+> Another Atoms 是一个「对话即应用」的 AI Agent 平台：用自然语言描述需求，Agent 在**真实隔离沙箱**里写文件、装依赖、构建，右侧实时预览，并可一键发布分享。
 > 本文档描述**系统当前长什么样**，是架构的权威来源；实现进度与排期见 [roadmap.md](./roadmap.md)，单次改动见 [iterations/](./iterations/)。
 
 ## 1. 总体架构：控制面 / 数据面分离
@@ -326,7 +326,7 @@ PUT/DELETE /api/skills/:id           改 / 删
 - **蓝图网格**：正交 1px 细线 + 顶部辉光，明暗两套 alpha（`--grid-line` / `--glow`），`.blueprint` 工具类。
 - **双主题**：oklch token（`:root` 亮 / `.dark` 暗），三态（系统/亮/暗）持久化；首屏由 `index.html` 内联脚本落类名防闪。
 - **字体**：全自托管且**同源**（Geist / Geist Mono / Noto Sans SC，中文按 `unicode-range` 分片按需下载），构建与运行均无外部字体请求。
-- **品牌**：`Atoms` 字标 = 点阵 + 原子轨道（内联 SVG，与网格同构），用于登录页 / 顶栏 / 空态。
+- **品牌**：`Another Atoms` 字标 = 点阵 + 原子轨道（内联 SVG，与网格同构），用于登录页 / 顶栏 / 空态。
 - **结构**：`AppShell` 全局外壳（字标 · 工具区 · 积分 · 主题 · 用户菜单）；token 在 `styles/tokens.css`，基础组件在 `components/ui/`。
 
 **文件管理器（迭代 004）**

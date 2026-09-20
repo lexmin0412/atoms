@@ -1,4 +1,4 @@
-# 安全专项审计（Atoms）
+# 安全专项审计（Another Atoms）
 
 - **日期**：2026-09-20
 - **范围**：程序本身（apps/api / apps/web / apps/sandbox）、AI 提示词与信息暴露面、服务器环境（A 机控制面 / B 机数据面）

@@ -1,14 +1,14 @@
 ---
 name: atoms-deploy
 description: >
-  部署与运维 Atoms（控制面 A 机 / 数据面 B 机沙箱 / nginx+HTTPS / SSH 隧道）。
+  部署与运维 Another Atoms（控制面 A 机 / 数据面 B 机沙箱 / nginx+HTTPS / SSH 隧道）。
   当需要「部署 atoms」「更新线上」「重启 atoms-api」「重启沙箱服务」「改数据库 schema」
   「签/续证书」「线上出问题排查」，或修改了 apps/api、apps/web、apps/sandbox 后要发布时使用。
   **真实主机地址/密钥路径/域名不写在本文件里**，见同目录 gitignored 的 `local.env`。
 tags: ["Deploy", "Atoms"]
 ---
 
-# Atoms 部署与运维（模板）
+# Another Atoms 部署与运维（模板）
 
 > **先读 `local.env`**（同目录，gitignored）：里面是真实主机、SSH key、域名、路径。
 > 下文用 `<A_HOST>` `<B_HOST>` `<DOMAIN>` `<SSH_KEY>` `<A_REPO>` `<B_REPO>` `<WEB_ROOT>` 等占位符。
