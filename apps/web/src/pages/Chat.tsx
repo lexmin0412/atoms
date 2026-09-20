@@ -82,6 +82,9 @@ function structuredMessage(msg: string): string | null {
   }
 }
 
+/** 输入框自动增高的上限（超出后内部滚动） */
+const MAX_INPUT_HEIGHT = 160;
+
 function friendlyError(msg: string): string {
   const structured = structuredMessage(msg);
   if (structured) return structured;
@@ -351,6 +354,8 @@ export default function Chat() {
   const [projectTitle, setProjectTitle] = useState('');
   const [balance, setBalance] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // ---- 工作台 / 对话 分栏 ----
   const splitRef = useRef<HTMLDivElement>(null);
@@ -601,6 +606,14 @@ export default function Chat() {
     return items;
   }, [dbAvailable]);
 
+  // 多行输入：随内容增高（到上限后内部滚动）
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_INPUT_HEIGHT)}px`;
+  }, [input]);
+
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const text = input.trim();
@@ -608,6 +621,8 @@ export default function Chat() {
     // 本轮选中的技能随请求带上：后端把正文作为参考资料附在这条消息上
     sendMessage({ text }, { body: { skills: pickedSkills } });
     setInput('');
+    // 回到单行高度
+    if (inputRef.current) inputRef.current.style.height = 'auto';
   }
 
   function toggleSkill(name: string) {
@@ -634,8 +649,15 @@ export default function Chat() {
   // 过滤后列表变短时夹住高亮项（不额外存状态，避免竞态）
   const pickerActive = Math.max(0, Math.min(pickerIndex, pickerSkills.length - 1));
 
-  function onComposerKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (!pickerOpen) return;
+  function onComposerKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (!pickerOpen) {
+      // Enter 发送；Shift+Enter 换行；输入法选词中（isComposing）不发送
+      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+        e.preventDefault();
+        formRef.current?.requestSubmit();
+      }
+      return;
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setPickerIndex(pickerSkills.length ? (pickerActive + 1) % pickerSkills.length : 0);
@@ -937,11 +959,6 @@ export default function Chat() {
             </span>
           )}
           <div className="ml-auto flex items-center gap-2">
-            {busy && (
-              <Button size="sm" variant="ghost" onClick={() => stop()}>
-                停止
-              </Button>
-            )}
             <CreditsBadge />
             <Button
               size="sm"
@@ -1029,6 +1046,7 @@ export default function Chat() {
         </div>
 
         <form
+          ref={formRef}
           onSubmit={submit}
           className="border-border border-t p-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]"
         >
@@ -1050,7 +1068,9 @@ export default function Chat() {
               </div>
             )}
             <div className="relative">
-              <input
+              <textarea
+                ref={inputRef}
+                rows={1}
                 value={input}
                 onChange={(e) => {
                   const v = e.target.value;
@@ -1066,8 +1086,8 @@ export default function Chat() {
                 }}
                 onKeyDown={onComposerKeyDown}
                 onBlur={() => setPickerOpen(false)}
-                placeholder="描述你想创建的应用…（输入 / 可唤起技能）"
-                className="placeholder:text-muted-foreground/70 h-9 w-full bg-transparent px-0.5 text-[16px] outline-none sm:h-7 sm:text-[13px]"
+                placeholder="描述你想创建的应用…"
+                className="placeholder:text-muted-foreground/70 block max-h-40 w-full resize-none bg-transparent px-0.5 py-1.5 text-[16px] leading-relaxed outline-none sm:text-[13px]"
               />
               {pickerOpen && (
                 <div
@@ -1156,26 +1176,43 @@ export default function Chat() {
               >
                 技能{pickedSkills.length > 0 ? `（${pickedSkills.length}）` : ''}
               </button>
-              <button
-                type="submit"
-                disabled={busy || !input.trim()}
-                aria-label="发送"
-                className="bg-accent text-accent-foreground ml-auto grid size-10 place-items-center rounded-full transition-opacity disabled:opacity-40 sm:size-8"
-              >
-                <svg
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+              <span className="text-muted-foreground/70 hidden text-[11px] sm:inline">
+                Enter 发送 · Shift+Enter 换行 · / 唤起技能
+              </span>
+              {/* 发送 / 停止 同一个位置，靠状态区分（生成中即为停止） */}
+              {busy ? (
+                <button
+                  type="button"
+                  onClick={() => stop()}
+                  aria-label="停止生成"
+                  title="停止生成"
+                  className="border-border bg-surface text-foreground hover:bg-muted ml-auto grid size-10 place-items-center rounded-full border transition-colors sm:size-8"
                 >
-                  <path d="M12 19V5" />
-                  <path d="m5 12 7-7 7 7" />
-                </svg>
-              </button>
+                  <span className="block size-[9px] rounded-[2px] bg-current" />
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  aria-label="发送"
+                  title="发送（Enter）"
+                  className="bg-accent text-accent-foreground ml-auto grid size-10 place-items-center rounded-full transition-opacity disabled:opacity-40 sm:size-8"
+                >
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 19V5" />
+                    <path d="m5 12 7-7 7 7" />
+                  </svg>
+                </button>
+              )}
             </div>
           </div>
         </form>
