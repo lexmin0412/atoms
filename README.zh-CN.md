@@ -42,10 +42,11 @@
 
 <br/>
 
-![工作台：左侧实时预览，右侧对话与工具调用](docs/screenshots/workbench.jpg)
+![Agent 仍在生成时，左侧预览里应用已可交互](docs/screenshots/generating-workbench.jpg)
 
 > 线上地址：<https://atoms.lexmin.cn> —— 注册即可使用（每月自动发放额度）。
-> 可以试试输入：「做一个番茄钟，深色主题，要有设置面板」
+> 可以试试输入：「生成一个电商 CRM 系统，含客户管理、订单管理、营销与会员、售后工单、数据看板模块，
+> 支持管理员 / 客服角色权限」
 
 ## 核心特性
 
@@ -114,19 +115,21 @@ deploy/
 
 ## 功能介绍
 
-### 对话式生成与实时预览
+### 从一句描述开始
 
-<img src="docs/screenshots/workbench.jpg" width="100%" alt="工作台">
+<img src="docs/screenshots/start-generate.jpg" width="100%" alt="描述需求后 Agent 开始构建">
 
-左侧是生成结果的实时预览（构建产物变化自动刷新），可切换到文件树与源码编辑；右侧是对话与工具调用，
-右上角实时显示**上下文用量 / 模型窗口**与积分余额。
+一句话说清要哪些模块、哪些角色即可。Agent 先查看项目现状、读取命中的技能，然后开始改文件；
+预览区在首次构建完成前显示「正在构建预览…」，后端启动状态也会在预览头部明示，
+右上角实时显示**上下文用量 / 模型窗口**与积分余额。构建产物一变预览就刷新——应用在 Agent 收工前就已可用，
+中间每一步都以工具卡片的形式可见（含结果与命令输出）。
 
 ### 生成出来的应用
 
-<img src="docs/screenshots/generated-app-timer.jpg" width="100%" alt="生成的番茄钟应用">
+<img src="docs/screenshots/generated-result.jpg" width="100%" alt="生成的 CRM 应用">
 
-上面这个番茄钟是平台生成的产物，一键发布后可直接访问：
-<https://88561f03-48bc-4541-9b4f-0301658ebc77.atoms.lexmin.cn>
+一个端到端生成的全栈 CRM：React 前端 + Hono 后端 + 独立 Postgres schema，带角色权限与演示账号，
+一键发布为独立应用。
 
 ### 技能系统
 
@@ -134,9 +137,12 @@ deploy/
 
 内置技能（只读，可查看 / 复制）与用户自定义技能并存；技能里声明的命令行工具会在首次使用时装入沙箱并跨容器复用。
 
-### 移动端
+### 积分计量
 
-<p align="center"><img src="docs/screenshots/mobile.jpg" width="340" alt="移动端"></p>
+<img src="docs/screenshots/credits.jpg" width="100%" alt="积分与消耗明细">
+
+每一轮按 token（输入 / 输出 / 缓存，费率同步自 models.dev）计价并按项目记账，迭代过程中的成本一目了然；
+每月额度自动补满。
 
 ### 快速上手
 
