@@ -292,6 +292,8 @@ export default function Chat() {
   const [tab, setTab] = useState<'preview' | 'files' | 'database'>('preview');
   const [previewVersion, setPreviewVersion] = useState(0);
   const [previewSrc, setPreviewSrc] = useState('');
+  /** 是否已有构建产物：null=未知（首次探测中）。没产物时不能渲染 iframe（会露出沙箱的 404 文本） */
+  const [hasBuild, setHasBuild] = useState<boolean | null>(null);
   const [showPanel, setShowPanel] = useState(false);
   const [publishError, setPublishError] = useState('');
   const [deploy, setDeploy] = useState<{
@@ -393,6 +395,7 @@ export default function Chat() {
     const t = setInterval(async () => {
       const r = await api.previewVersion(id).catch(() => null);
       if (r?.version) {
+        setHasBuild(true);
         if (last && r.version !== last) setPreviewVersion((v) => v + 1);
         last = r.version;
       }
@@ -464,6 +467,11 @@ export default function Chat() {
       .then((r) => setPreviewSrc(r.url))
       .catch(() => {});
     api
+      .previewVersion(id)
+      .then((r) => setHasBuild(Boolean(r.version)))
+      // 探测失败就当没有产物：否则会一直停在「正在构建预览…」
+      .catch(() => setHasBuild(false));
+    api
       .getProject(id)
       .then((r) => setProjectTitle(r.project.title))
       .catch(() => {});
@@ -488,6 +496,10 @@ export default function Chat() {
       window.dispatchEvent(new CustomEvent('atoms:credits'));
       setPreviewVersion((v) => v + 1);
       if (id) {
+        api
+          .previewVersion(id)
+          .then((r) => setHasBuild(Boolean(r.version)))
+          .catch(() => {});
         // 预览用独立子域；若有后端则启动开发应用（/api 才通）
         api
           .previewUrl(id)
@@ -728,7 +740,7 @@ export default function Chat() {
                   </svg>
                 </a>
               </div>
-              {previewSrc ? (
+              {previewSrc && hasBuild ? (
                 <iframe
                   key={previewVersion}
                   title="preview"
@@ -736,8 +748,26 @@ export default function Chat() {
                   className="min-h-0 w-full flex-1 bg-white"
                 />
               ) : (
-                <div className="grid flex-1 place-items-center">
-                  <p className="text-muted-foreground text-[12.5px]">预览准备中…</p>
+                <div className="blueprint grid min-h-0 flex-1 place-items-center px-6">
+                  <div className="max-w-[34ch] text-center">
+                    <span className="text-muted-foreground/45 inline-block">
+                      <IconSparkle size={26} />
+                    </span>
+                    <p className="mt-3 text-[13px] font-medium">
+                      {!previewSrc
+                        ? '暂不可用'
+                        : busy || hasBuild === null
+                          ? '正在构建预览…'
+                          : '还没有预览'}
+                    </p>
+                    <p className="text-muted-foreground mt-1.5 text-[12px] leading-relaxed">
+                      {!previewSrc
+                        ? '平台未配置应用域名（APPS_DOMAIN），暂时无法展示预览。'
+                        : busy || hasBuild === null
+                          ? 'Agent 构建完成后，应用会自动显示在这里。'
+                          : '在右侧描述你想要的界面，Agent 会写好代码并构建，产物实时显示在这里。'}
+                    </p>
+                  </div>
                 </div>
               )}
             </div>

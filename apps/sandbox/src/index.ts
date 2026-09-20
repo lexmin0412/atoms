@@ -156,6 +156,38 @@ app.post('/sandbox/:id/snapshot', async (c) => {
   return c.json({ files: await snapshotWorkspace(c.req.param('id')) });
 });
 
+/**
+ * 预览还没构建时的兜底页。
+ * 之前返回的是给开发者看的纯文本（"preview not built yet — 让 Agent 运行 pnpm -r build"），
+ * 直接访问预览地址时会很难看，所以换成一张人看的提示页。
+ */
+const PREVIEW_EMPTY_HTML = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>暂无预览</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+    font: 14px/1.6 system-ui, -apple-system, "Noto Sans SC", sans-serif;
+    color: #6b6b6b; background-color: #fafafa;
+    background-image: linear-gradient(rgba(0,0,0,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,0,0,.04) 1px, transparent 1px);
+    background-size: 22px 22px; }
+  .card { max-width: 34ch; padding: 24px; text-align: center; }
+  h1 { margin: 0 0 6px; font-size: 14px; font-weight: 600; color: #3a3a3a; }
+  p { margin: 0; font-size: 12.5px; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #8b8b8b; background-color: #121212;
+      background-image: linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px); }
+    h1 { color: #d4d4d4; }
+  }
+</style></head>
+<body><div class="card">
+  <h1>还没有预览</h1>
+  <p>这个应用还没构建出产物。让 Agent 生成并构建成功后，这里会自动显示。</p>
+</div></body></html>`;
+
 // 预览：静态托管 apps/web/dist
 async function servePreview(c: { req: { param: (k: string) => string; url: string } }) {
   const id = c.req.param('id');
@@ -168,9 +200,12 @@ async function servePreview(c: { req: { param: (k: string) => string; url: strin
       headers: { 'Content-Type': contentType, 'Cache-Control': 'no-store' },
     });
   } catch {
-    return new Response('preview not built yet — 让 Agent 运行 pnpm -r build', {
+    return new Response(PREVIEW_EMPTY_HTML, {
       status: 404,
-      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+      },
     });
   }
 }
