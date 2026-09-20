@@ -196,7 +196,7 @@ export default function Projects() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-8 py-9">
+    <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-8 sm:py-9">
       <div className="mb-7 flex items-center justify-between gap-4">
         <h1 className="text-[22px] font-semibold tracking-[-0.02em]">我的项目</h1>
         <Button variant="primary" onClick={() => setCreating(true)}>
@@ -286,7 +286,7 @@ export default function Projects() {
                     {fmtDate(p.updatedAt)}
                   </p>
                 </div>
-                <div className="opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="opacity-100 transition-opacity lg:opacity-0 lg:group-hover:opacity-100">
                   <CardMenu
                     onOpen={() => nav(`/p/${p.id}`)}
                     onRename={() => {
@@ -328,7 +328,10 @@ export default function Projects() {
 
       {creating && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 backdrop-blur-[1px]">
-          <form onSubmit={create} className="panel-raised w-96 p-5">
+          <form
+            onSubmit={create}
+            className="panel-raised w-[calc(100vw-2rem)] max-w-96 p-5"
+          >
             <p className="mb-1 text-[14px] font-medium">新建项目</p>
             <p className="text-muted-foreground mb-4 text-[12px]">
               一句话描述你想做的东西，细节可以之后再聊。

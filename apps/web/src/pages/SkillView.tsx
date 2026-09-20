@@ -57,7 +57,7 @@ export default function SkillView() {
 
   if (loading) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-8 py-10">
+      <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-8 sm:py-10">
         <p className="text-muted-foreground text-[12.5px]">加载中…</p>
       </div>
     );
@@ -65,7 +65,7 @@ export default function SkillView() {
 
   if (!skill) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-8 py-10">
+      <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-8 sm:py-10">
         <Link
           to="/skills"
           className="text-muted-foreground hover:text-foreground text-[12.5px]"
@@ -80,7 +80,7 @@ export default function SkillView() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-8 py-10">
+    <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-8 sm:py-10">
       <div className="mb-6 flex items-center gap-3">
         <Link
           to="/skills"
@@ -96,7 +96,7 @@ export default function SkillView() {
         </div>
       )}
 
-      <div className="flex items-start gap-3">
+      <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <h1 className="text-[18px] font-semibold tracking-[-0.02em] break-words">
             {skill.name}
@@ -105,7 +105,7 @@ export default function SkillView() {
             {skill.description}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           {skill.builtin ? (
             <Button
               size="sm"

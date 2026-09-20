@@ -109,6 +109,36 @@
     height: 100%;
   }
 
+  /* iOS Safari 的地址栏会「吃掉」视口：用 dvh 让整屏外壳不把输入框顶到屏幕外 */
+  @supports (height: 100dvh) {
+    html,
+    body,
+    #root {
+      height: 100dvh;
+    }
+  }
+
+  /* 横屏/小屏不要因字号自动放大 */
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /*
+   * 移动端表单控件字号一律 ≥16px：iOS 上 <16px 时聚焦会强制放大整页，
+   * 导致布局被顶乱（桌面端保持原有密度）。
+   */
+  @media (max-width: 1023px) {
+    input,
+    textarea,
+    select {
+      font-size: 16px;
+    }
+    input:not([type='checkbox']):not([type='radio']),
+    select {
+      min-height: 2.5rem;
+    }
+  }
+
   body {
     margin: 0;
     background-color: var(--background);

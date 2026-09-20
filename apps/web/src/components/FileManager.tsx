@@ -336,7 +336,7 @@ export default function FileManager({ projectId, busy }: Props) {
       <div className="flex min-h-0 flex-1">
         {/* 文件树 */}
         <div
-          className="border-border w-52 shrink-0 overflow-y-auto border-r py-1.5"
+          className="border-border w-36 shrink-0 overflow-y-auto border-r py-1.5 sm:w-44 lg:w-52"
           onContextMenu={(e) => {
             e.preventDefault();
             setMenu({ x: e.clientX, y: e.clientY, node: null });
@@ -366,7 +366,7 @@ export default function FileManager({ projectId, busy }: Props) {
                 setMenu({ x: e.clientX, y: e.clientY, node: n });
               }}
               className={cx(
-                'group flex h-[22px] cursor-pointer items-center gap-1 pr-1.5 text-[12.5px] transition-colors',
+                'group flex h-9 cursor-pointer items-center gap-1 pr-1.5 text-[12.5px] transition-colors lg:h-[22px]',
                 activeId === n.id
                   ? 'bg-accent/10 text-accent'
                   : 'text-foreground/85 hover:bg-muted hover:text-foreground',
@@ -386,7 +386,7 @@ export default function FileManager({ projectId, busy }: Props) {
               </span>
               <span className="truncate">{n.name}</span>
               {!locked && (
-                <span className="ml-auto hidden shrink-0 gap-0.5 group-hover:flex">
+                <span className="ml-auto flex shrink-0 gap-0.5 lg:hidden lg:group-hover:flex">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

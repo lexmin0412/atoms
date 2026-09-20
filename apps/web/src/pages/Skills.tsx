@@ -48,7 +48,7 @@ export default function Skills({
     <div
       className={cx(
         'flex min-h-0 flex-1 flex-col',
-        !embedded && 'mx-auto w-full max-w-4xl',
+        !embedded && 'mx-auto w-full max-w-4xl px-4 sm:px-8',
       )}
     >
       <div
@@ -113,8 +113,8 @@ export default function Skills({
 
         <div className="grid gap-3 sm:grid-cols-2">
           {(list ?? []).map((s) => (
-            <div key={s.id} className="panel flex flex-col p-3.5">
-              <div className="flex items-start gap-2">
+            <div key={s.id} className="panel flex min-w-0 flex-col p-3.5">
+              <div className="flex flex-wrap items-start gap-2">
                 <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
                   {s.name}
                 </span>

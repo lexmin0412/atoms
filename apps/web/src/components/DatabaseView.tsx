@@ -181,7 +181,7 @@ export default function DatabaseView({ projectId }: { projectId: string }) {
       </div>
 
       <div className="flex min-h-0 flex-1">
-        <div className="border-border w-44 shrink-0 overflow-y-auto border-r py-1.5">
+        <div className="border-border w-32 shrink-0 overflow-y-auto border-r py-1.5 sm:w-40 lg:w-44">
           {error && (tables ?? []).length === 0 && (
             <p className="text-danger px-2.5 py-1 text-[11px] break-words">{error}</p>
           )}

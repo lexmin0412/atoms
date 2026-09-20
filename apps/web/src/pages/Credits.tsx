@@ -116,7 +116,7 @@ export default function Credits() {
     id ? (projects.find((p) => p.id === id)?.title ?? id.slice(0, 8)) : '—';
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-10">
+    <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 sm:py-10">
       <div className="mb-7">
         <h1 className="text-[20px] font-semibold tracking-[-0.02em]">积分</h1>
         <p className="text-muted-foreground mt-1 text-[12.5px]">
@@ -176,8 +176,8 @@ export default function Credits() {
         <Badge className="ml-auto">共 {total} 条</Badge>
       </div>
 
-      <div className="panel overflow-hidden">
-        <table className="w-full text-left text-[12.5px]">
+      <div className="panel overflow-x-auto">
+        <table className="w-full text-left text-[12.5px] whitespace-nowrap">
           <thead className="bg-muted/50 text-muted-foreground text-[11.5px]">
             <tr>
               <th className="px-3 py-2 font-normal">时间</th>

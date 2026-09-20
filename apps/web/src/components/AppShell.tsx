@@ -43,6 +43,20 @@ function Icon({ name, size = 15 }: { name: string; size?: number }) {
           <path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" />
         </svg>
       );
+    case 'menu':
+      return (
+        <svg {...c}>
+          <path d="M4 7h16" />
+          <path d="M4 12h16" />
+          <path d="M4 17h16" />
+        </svg>
+      );
+    case 'back':
+      return (
+        <svg {...c}>
+          <path d="M15 5l-7 7 7 7" />
+        </svg>
+      );
     case 'panel':
       return (
         <svg {...c}>
@@ -155,6 +169,8 @@ export function AppShell({
       typeof window !== 'undefined' && window.localStorage.getItem(COLLAPSE_KEY) === '1',
   );
   const [recent, setRecent] = useState<ProjectDto[]>([]);
+  /** 移动端：导航以抽屉形式覆盖显示 */
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     api
@@ -170,6 +186,8 @@ export function AppShell({
     });
   }
 
+  // 抽屉打开时按完整形态渲染（折叠是桌面端的概念）
+  const compact = collapsed && !drawerOpen;
   const activeProjectId = pathname.startsWith('/p/') ? pathname.slice(3) : '';
   const isActive = (to: string) =>
     to === '/' ? pathname === '/' || pathname.startsWith('/p/') : pathname.startsWith(to);
@@ -180,10 +198,23 @@ export function AppShell({
       data-collapsed={collapsed ? 'true' : 'false'}
       style={{ ['--nav-overlay' as string]: collapsed ? '44px' : '0px' }}
     >
+      {/* 移动端抽屉遮罩 */}
+      {drawerOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          onClick={() => setDrawerOpen(false)}
+          aria-hidden
+        />
+      )}
       <aside
         className={cx(
-          'flex shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-150',
-          collapsed ? 'w-16' : 'w-64',
+          'border-border bg-surface flex shrink-0 flex-col border-r',
+          // 移动端：抽屉（覆盖式）；桌面端：静态列（可折叠）
+          'fixed inset-y-0 left-0 z-50 w-64 transition-transform duration-200',
+          'lg:static lg:z-auto lg:translate-x-0 lg:transition-[width]',
+          // 关闭时用 invisible：translate 只是视觉位移，链接仍会被读屏/键盘 focus 到
+          drawerOpen ? 'visible translate-x-0' : 'invisible -translate-x-full',
+          collapsed ? 'lg:w-16' : 'lg:w-64',
         )}
       >
         <div
@@ -205,15 +236,23 @@ export function AppShell({
                 onClick={toggleCollapse}
                 aria-label="收起侧栏"
                 title="收起侧栏"
-                className="text-muted-foreground hover:bg-muted hover:text-foreground ml-auto grid size-7 place-items-center rounded-xs transition-colors"
+                className="text-muted-foreground hover:bg-muted hover:text-foreground ml-auto hidden size-7 place-items-center rounded-xs transition-colors lg:grid"
               >
                 <Icon name="panel" />
+              </button>
+              <button
+                onClick={() => setDrawerOpen(false)}
+                aria-label="关闭导航"
+                title="关闭导航"
+                className="text-muted-foreground hover:bg-muted hover:text-foreground ml-auto grid size-9 place-items-center rounded-xs transition-colors lg:hidden"
+              >
+                <Icon name="back" />
               </button>
             </>
           )}
         </div>
 
-        {!collapsed && (
+        {!compact && (
           <div className="px-3 pb-1">
             <div className="border-border bg-muted/40 flex items-center gap-2.5 rounded-md border px-2.5 py-2">
               <span className="bg-accent-soft text-accent-ink grid size-6 shrink-0 place-items-center rounded-xs text-[11px] font-semibold">
@@ -229,15 +268,16 @@ export function AppShell({
           </div>
         )}
 
-        <nav className={cx('flex flex-col gap-0.5 py-2', collapsed ? 'px-2' : 'px-3')}>
+        <nav className={cx('flex flex-col gap-0.5 py-2', compact ? 'px-2' : 'px-3')}>
           {NAV.map((n) => (
             <Link
               key={n.to}
               to={n.to}
-              title={collapsed ? n.label : undefined}
+              title={compact ? n.label : undefined}
+              onClick={() => setDrawerOpen(false)}
               className={cx(
                 'flex items-center gap-2.5 rounded-md text-[13px] transition-colors',
-                collapsed ? 'justify-center px-0 py-2' : 'px-2.5 py-2',
+                compact ? 'justify-center px-0 py-2.5' : 'px-2.5 py-2.5',
                 isActive(n.to)
                   ? 'bg-muted font-medium text-foreground'
                   : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
@@ -246,12 +286,12 @@ export function AppShell({
               <span style={isActive(n.to) ? { color: 'var(--accent-ink)' } : undefined}>
                 <Icon name={n.icon} />
               </span>
-              {!collapsed && n.label}
+              {!compact && n.label}
             </Link>
           ))}
         </nav>
 
-        {!collapsed && recent.length > 0 && (
+        {!compact && recent.length > 0 && (
           <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-3">
             <p className="text-muted-foreground/80 px-2.5 pb-1.5 text-[11px] tracking-wide">
               最近
@@ -261,6 +301,7 @@ export function AppShell({
                 <Link
                   key={p.id}
                   to={`/p/${p.id}`}
+                  onClick={() => setDrawerOpen(false)}
                   title={p.title}
                   className={cx(
                     'truncate rounded-md px-2.5 py-1.5 text-[12.5px] transition-colors',
@@ -275,20 +316,19 @@ export function AppShell({
             </div>
           </div>
         )}
-        {(!collapsed && recent.length === 0) || collapsed ? (
-          <div className="flex-1" />
-        ) : null}
+        {(!compact && recent.length === 0) || compact ? <div className="flex-1" /> : null}
 
         <div
           className={cx(
-            'mt-auto border-t border-border py-2.5',
-            collapsed ? 'px-2' : 'px-3',
+            'border-border mt-auto border-t py-2.5',
+            'pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pb-2.5',
+            compact ? 'px-2' : 'px-3',
           )}
         >
-          <div className={cx('mb-2 flex', collapsed ? 'justify-center' : 'px-1')}>
-            {collapsed ? <ThemeCycle /> : <ThemeToggle />}
+          <div className={cx('mb-2 flex', compact ? 'justify-center' : 'px-1')}>
+            {compact ? <ThemeCycle /> : <ThemeToggle />}
           </div>
-          <UserBox user={user} onLogout={onLogout} compact={collapsed} />
+          <UserBox user={user} onLogout={onLogout} compact={compact} />
         </div>
       </aside>
 
@@ -303,10 +343,41 @@ export function AppShell({
             <Icon name="panel" />
           </button>
         )}
+
         {bare ? (
-          <div className="min-h-0 min-w-0 flex-1">{children}</div>
+          <>
+            {/* 工作台自带头部：移动端放一个浮动入口，页面头部用 pl-11 让位 */}
+            <button
+              onClick={() => setDrawerOpen(true)}
+              aria-label="打开导航"
+              className="panel text-muted-foreground hover:text-foreground absolute top-1.5 left-2 z-30 grid size-9 place-items-center transition-colors lg:hidden"
+            >
+              <Icon name="menu" />
+            </button>
+            <div className="min-h-0 min-w-0 flex-1">{children}</div>
+          </>
         ) : (
-          <main className="min-h-0 w-full flex-1 overflow-y-auto">{children}</main>
+          <>
+            {/* 移动端顶部条：汉堡 + 品牌 */}
+            <header className="border-border bg-surface flex h-12 shrink-0 items-center gap-2.5 border-b px-3 lg:hidden">
+              <button
+                onClick={() => setDrawerOpen(true)}
+                aria-label="打开导航"
+                className="text-muted-foreground hover:text-foreground -ml-1 grid size-9 place-items-center rounded-xs transition-colors"
+              >
+                <Icon name="menu" />
+              </button>
+              <Link to="/" aria-label="Atoms 首页">
+                <AtomsLogo />
+              </Link>
+            </header>
+            <main
+              className="min-h-0 w-full flex-1 overflow-y-auto"
+              style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+            >
+              {children}
+            </main>
+          </>
         )}
       </div>
     </div>

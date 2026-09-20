@@ -263,6 +263,16 @@ PUT/DELETE /api/skills/:id           改 / 删
 
 ## 8. 前端（React）
 
+**响应式（移动端适配）**：
+- 断点用 `lg`(1024px)：`<lg` 时左侧导航变成 **off-canvas 抽屉**（汉堡入口 + 遮罩，关闭时 `invisible` 以确保不进可访问性树/焦点），主区顶部有一条移动端顶栏；`≥lg` 保留可折叠静态侧栏（折叠状态持久化）。
+- 工作台在 `<lg` 时是**单栏切换**：对话与「预览/文件/数据库/技能」面板互斥全屏，面板头部必须有**返回聊天**入口（曾是死胡同）。
+- 表单控件在 `<lg` 强制字号 ≥16px（否则 iOS 聚焦会放大整页）；触控目标 `lg` 起再回到紧凑尺寸。
+- 高度用 `100dvh`（带回退）+ `viewport-fit=cover`，底部交互区留 `env(safe-area-inset-bottom)`。
+- 横向溢出防线：`truncate`（`white-space:nowrap`）的祖先若是 grid/flex 子项，必须给 `min-w-0`，否则子项 `min-width:auto` 会被撑到文本全宽（真实踩过：技能卡片被撑到 1076px）。
+- 表格类内容用局部 `overflow-x-auto` + `whitespace-nowrap` 横向滚动，不要靠外层裁切。
+
+
+
 ```
 <App>
   <Login/>

@@ -17,6 +17,24 @@ import Skills from './Skills';
 
 // 懒加载：Streamdown + Shiki 体积较大，推迟到首条消息渲染时再加载
 const Markdown = lazy(() => import('../components/Markdown'));
+
+/** 移动端返回聊天用 */
+function IconBack() {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M15 5l-7 7 7 7" />
+    </svg>
+  );
+}
 // 懒加载：CodeMirror + 各语言包体积较大，仅切到「文件」页时加载
 const FileManager = lazy(() => import('../components/FileManager'));
 
@@ -216,7 +234,7 @@ function MessageFooter({
         />
         Atoms
       </span>
-      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/m:opacity-100 focus-within:opacity-100">
+      <div className="flex items-center gap-0.5 opacity-100 transition-opacity lg:opacity-0 lg:group-hover/m:opacity-100 lg:focus-within:opacity-100">
         {text && (
           <button
             onClick={() => {
@@ -641,11 +659,17 @@ export default function Chat() {
         }
         style={isWide && leftWidth ? { width: leftWidth } : undefined}
       >
-        <div
-          className="border-border flex h-12 shrink-0 items-center gap-3 border-b pr-3"
-          style={{ paddingLeft: 'calc(0.75rem + var(--nav-overlay, 0px))' }}
-        >
-          <span className="max-w-52 truncate text-[13px] font-medium">
+        <div className="border-border flex h-12 shrink-0 items-center gap-2 overflow-x-auto border-b pr-3 pl-11 lg:gap-3 lg:pl-[calc(0.75rem+var(--nav-overlay,0px))]">
+          {/* 移动端：面板是全屏的，必须给一条回到聊天的路 */}
+          <button
+            onClick={() => setShowPanel(false)}
+            aria-label="返回聊天"
+            title="返回聊天"
+            className="text-muted-foreground hover:bg-muted hover:text-foreground -ml-1 grid size-9 shrink-0 place-items-center rounded-xs transition-colors lg:hidden"
+          >
+            <IconBack />
+          </button>
+          <span className="hidden max-w-52 truncate text-[13px] font-medium sm:inline">
             {projectTitle || '项目'}
           </span>
           <Segmented value={tab} onChange={setTab} items={tabItems} />
@@ -880,7 +904,7 @@ export default function Chat() {
         }
         style={isWide && chatWidth ? { width: chatWidth } : undefined}
       >
-        <div className="border-border flex h-12 shrink-0 items-center gap-2.5 border-b px-3">
+        <div className="border-border flex h-12 shrink-0 items-center gap-2.5 border-b pr-3 pl-11 lg:px-3">
           <span className="truncate text-[13px] font-medium">Chat with me</span>
           {busy && (
             <span className="text-muted-foreground flex items-center gap-1.5 text-[11.5px]">
@@ -984,7 +1008,10 @@ export default function Chat() {
           <div ref={bottomRef} />
         </div>
 
-        <form onSubmit={submit} className="border-border border-t p-3.5">
+        <form
+          onSubmit={submit}
+          className="border-border border-t p-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]"
+        >
           <div className="border-border bg-surface focus-within:border-ring rounded-md border p-2.5 transition-colors">
             {pickedSkills.length > 0 && (
               <div className="mb-2 flex flex-wrap gap-1.5">
@@ -1020,13 +1047,13 @@ export default function Chat() {
                 onKeyDown={onComposerKeyDown}
                 onBlur={() => setPickerOpen(false)}
                 placeholder="描述你想创建的应用…（输入 / 可唤起技能）"
-                className="placeholder:text-muted-foreground/70 h-7 w-full bg-transparent px-0.5 text-[13px] outline-none"
+                className="placeholder:text-muted-foreground/70 h-9 w-full bg-transparent px-0.5 text-[16px] outline-none lg:h-7 lg:text-[13px]"
               />
               {pickerOpen && (
                 <div
                   // 点在弹层内不要夺走输入框焦点（否则 onBlur 会先把它关掉）
                   onMouseDown={(e) => e.preventDefault()}
-                  className="border-border bg-surface absolute bottom-9 left-0 z-20 max-h-64 w-80 overflow-y-auto rounded-md border shadow-lg"
+                  className="border-border bg-surface absolute bottom-11 left-0 z-20 max-h-64 w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-md border shadow-lg lg:bottom-9"
                 >
                   {skills.length === 0 ? (
                     <p className="text-muted-foreground px-3 py-3 text-[12px]">
@@ -1113,7 +1140,7 @@ export default function Chat() {
                 type="submit"
                 disabled={busy || !input.trim()}
                 aria-label="发送"
-                className="bg-accent text-accent-foreground ml-auto grid size-8 place-items-center rounded-full transition-opacity disabled:opacity-40"
+                className="bg-accent text-accent-foreground ml-auto grid size-10 place-items-center rounded-full transition-opacity disabled:opacity-40 lg:size-8"
               >
                 <svg
                   width="15"

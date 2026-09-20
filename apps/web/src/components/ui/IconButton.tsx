@@ -19,7 +19,7 @@ export function IconButton({
       {...rest}
       aria-label={label}
       className={cx(
-        'group/ib relative grid size-7 shrink-0 place-items-center rounded-xs transition-colors',
+        'group/ib relative grid size-9 shrink-0 place-items-center rounded-xs transition-colors lg:size-7',
         'text-muted-foreground hover:bg-muted hover:text-foreground',
         'disabled:pointer-events-none disabled:opacity-40',
         className,

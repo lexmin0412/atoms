@@ -139,14 +139,14 @@ export default function SkillEdit() {
 
   if (loading) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-8 py-10">
+      <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-8 sm:py-10">
         <p className="text-muted-foreground text-[12.5px]">加载中…</p>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-8 py-10">
+    <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-8 sm:py-10">
       <div className="mb-6 flex items-center gap-3">
         <Link
           to="/skills"

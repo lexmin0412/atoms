@@ -94,7 +94,7 @@ export default function Login({
         </div>
 
         {/* 表单面板 */}
-        <div className="border-border p-9 md:border-l">
+        <div className="border-border p-6 md:border-l md:p-9">
           <div className="mb-6 flex items-center gap-2 md:hidden">
             <span style={{ color: 'var(--accent)' }}>
               <AtomsMark size={22} />

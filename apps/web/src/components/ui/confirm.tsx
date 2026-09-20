@@ -186,7 +186,7 @@ export function ConfirmDialog({
       <div
         ref={ref as unknown as React.RefObject<HTMLDivElement>}
         role="alertdialog"
-        className="panel-raised w-96 p-5"
+        className="panel-raised w-[calc(100vw-2rem)] max-w-96 p-5"
       >
         <p className="text-[14px] font-medium">{title}</p>
         {description && (
@@ -255,7 +255,7 @@ export function PromptDialog({
           e.preventDefault();
           submit();
         }}
-        className="panel-raised w-96 p-5"
+        className="panel-raised w-[calc(100vw-2rem)] max-w-96 p-5"
       >
         <p className="text-[14px] font-medium">{title}</p>
         {description && (
