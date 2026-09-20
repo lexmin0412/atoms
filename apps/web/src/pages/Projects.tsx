@@ -276,9 +276,13 @@ export default function Projects() {
             <div
               key={p.id}
               onClick={() => nav(`/p/${p.id}`)}
-              className="panel group hover:border-border-strong cursor-pointer overflow-hidden transition-colors"
+              className="panel group hover:border-border-strong cursor-pointer transition-colors"
             >
-              <Thumb id={p.id} className="border-border rounded-none border-0 border-b" />
+              {/* 只在这里裁切缩略图：卡片本身不能 overflow-hidden，
+                  否则内部弹出的「更多操作」菜单会被裁掉、无法点击 */}
+              <div className="overflow-hidden rounded-t-[var(--radius-md)]">
+                <Thumb id={p.id} className="border-border border-b" />
+              </div>
               <div className="flex items-center gap-2 px-3 py-2.5">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-medium">{p.title}</p>
