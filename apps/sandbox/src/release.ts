@@ -173,7 +173,7 @@ function devAppContainerName(id: string) {
 
 async function containerIp(name: string): Promise<string> {
   try {
-    return (
+    const out = (
       await docker([
         'inspect',
         '-f',
@@ -181,6 +181,8 @@ async function containerIp(name: string): Promise<string> {
         name,
       ])
     ).trim();
+    // 注意：容器已停止时 docker 会打印字面量 "invalid IP"（而非空串），必须过滤
+    return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(out) ? out : '';
   } catch {
     return '';
   }

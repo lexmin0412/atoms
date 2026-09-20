@@ -101,6 +101,13 @@ ssh ... ubuntu@<B_HOST> 'cd <B_REPO> && docker build -t atoms-sandbox:latest doc
     `db:init` 会为所有已存在 schema 回填角色（幂等）。
 21c. **轮换数据库密码后要重建存量容器**：容器的连接串在启动时注入，改密码后旧容器会在重连时失败 ——
     用 `app_releases` 里 `db_schema is not null` 的记录重建发布容器，devapp/dev 沙箱会按需自动重建。
+21d. **项目 schema 内的对象必须归项目角色所有**：生成的 app 启动常自跑迁移（`alter table add column`），
+    只有增删改查权限 → `must be owner of table` → 应用启动即崩（devapp / 发布容器都挂）。
+    `db:init` 会把存量表/序列 `alter ... owner to` 给项目角色；转移要求能 `SET ROLE`，
+    故 provisioning 里显式 `grant <role> to <admin> with set true`（PG16 历史成员关系默认无 SET）。
+    `atoms_ro` 由**项目角色自己的短连接**授权（只有 owner 能授）。schema 本身仍归管理角色。
+21e. **`docker inspect` 对已停止容器返回字面量 `invalid IP`**（不是空串）：IP 判断必须正则校验
+    （`^\\d{1,3}(\\.\\d{1,3}){3}$`），否则会拼出 `http://invalid IP:3002` → 代理 500 而非 503。
 21. **credits 环境变量只在服务端 `.env`**：`CREDITS_MONTHLY_GRANT`（默认 500）、`APPS_DOMAIN`（发布/预览域名）。**改 schema/加表后必须先 rsync 再 `db:init`**。
 22. **没有公网管理入口**：手动调额/查系统额度用 A 机本地 CLI —— `pnpm --filter @atoms/api credits grant|list|usage`。
 23. **定价依赖 models.dev**：拉不到会回退内置兜底费率（日志里会 warn），不阻塞聊天。`.cache/` 已 gitignore。

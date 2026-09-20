@@ -250,7 +250,20 @@ async function devAppProxy(c: Context<SandboxEnv>) {
   if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
     init.body = await c.req.arrayBuffer();
   }
-  const res = await fetch(full, init);
+  let res: Response;
+  try {
+    res = await fetch(full, init);
+  } catch (err) {
+    // 容器刚退出 / 端口未就绪：给出可操作的 503，而不是 500
+    return c.json(
+      {
+        error: 'devapp_unreachable',
+        message: '开发预览后端未运行。请在项目页面点「重新构建」后再试。',
+        detail: String(err).slice(0, 200),
+      },
+      503,
+    );
+  }
   const out = new Headers(res.headers);
   out.delete('content-encoding');
   out.delete('content-length');

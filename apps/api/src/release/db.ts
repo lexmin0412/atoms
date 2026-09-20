@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
+import pg from 'pg';
+
 import { config } from '../config';
 import { appQuery, query } from '../db';
 
@@ -26,35 +28,89 @@ function q(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
+/** 单引号字符串字面量（转义） */
+function lit(v: string): string {
+  return `'${v.replace(/'/g, "''")}'`;
+}
+
 /**
- * 给「自己的 schema」授予最小权限：能建表、能增删改查自己的表；
- * **不给 schema 所有权**（无法删 schema / 越界到其它项目）。
+ * 给「自己的 schema」授予权限并把既有对象的所有权交给它。
+ *
+ * 为什么要转 owner：生成的 app 启动时通常自己跑迁移
+ * （`create table if not exists`、`alter table add column`、`create index`），
+ * `alter` 系列需要**表的所有权**，仅有增删改查权限会报 `must be owner of table`。
+ * 只转 schema 内对象，schema 本身仍归管理角色 —— 项目角色删不掉 schema、也越不了界。
  */
-async function grantOwnerRights(schema: string, role: string): Promise<void> {
+async function grantOwnerRights(
+  schema: string,
+  role: string,
+  password: string,
+): Promise<void> {
   const s = q(schema);
   const r = q(role);
-  const dbName = new URL(config.appDatabaseUrl).pathname.replace(/^\//, '');
+  const parsed = new URL(config.appDatabaseUrl);
+  const dbName = parsed.pathname.replace(/^\//, '');
+  const adminRole = q(decodeURIComponent(parsed.username));
   await appQuery(`grant connect on database ${q(dbName)} to ${r}`).catch(() => {});
   await appQuery(`revoke usage on schema public from ${r}`).catch(() => {});
   await appQuery(`grant usage, create on schema ${s} to ${r}`);
+
+  // `alter ... owner to` 要求当前角色能 SET ROLE 到目标角色；
+  // PG16 的成员关系默认不带 SET 权限（历史回填的角色尤其如此），这里显式补上（幂等）。
+  await appQuery(`grant ${r} to ${adminRole} with set true`).catch(() => {});
+
+  // 既有表 / 序列：所有权交给项目角色
+  await appQuery(`
+    do $$
+    declare rec record;
+    begin
+      for rec in select tablename from pg_tables where schemaname = ${lit(schema)} loop
+        execute format('alter table %I.%I owner to %I', ${lit(schema)}, rec.tablename, ${lit(role)});
+      end loop;
+      for rec in select sequencename from pg_sequences where schemaname = ${lit(schema)} loop
+        execute format('alter sequence %I.%I owner to %I', ${lit(schema)}, rec.sequencename, ${lit(role)});
+      end loop;
+    end $$;
+  `);
+
+  // 兜底授权（对象已被转移，这里覆盖“转移后新建但非本角色创建”的极端情况）+ 未来对象
   await appQuery(
     `grant select, insert, update, delete on all tables in schema ${s} to ${r}`,
   );
   await appQuery(`grant usage, select on all sequences in schema ${s} to ${r}`);
-  // 存量表 / 后续由管理角色创建的表也要覆盖到
   await appQuery(
     `alter default privileges in schema ${s} grant select, insert, update, delete on tables to ${r}`,
   );
   await appQuery(
     `alter default privileges in schema ${s} grant usage, select on sequences to ${r}`,
   );
+
+  // DB 查看用的只读角色：只有对象 owner 才有权授出 → 用项目角色自己的连接来授权。
+  // 不用 SET ROLE：PG16 的成员关系可能缺 set_option，且管理角色不该能扮演项目角色。
+  await grantReadonlyAsOwner(schema, role, password);
 }
 
-/** DB 查看用的只读角色 */
-async function grantToReadonly(schema: string): Promise<void> {
-  const s = q(schema);
-  await appQuery(`grant usage on schema ${s} to atoms_ro`).catch(() => {});
-  await appQuery(`grant select on all tables in schema ${s} to atoms_ro`).catch(() => {});
+/** 以「项目角色自己」的身份，把自己 schema 的读权限授给只读角色 atoms_ro */
+async function grantReadonlyAsOwner(
+  schema: string,
+  role: string,
+  password: string,
+): Promise<void> {
+  const u = new URL(config.appDatabaseUrl);
+  u.username = role;
+  u.password = password;
+  const client = new pg.Client({ connectionString: u.toString() });
+  await client.connect();
+  try {
+    await client.query(`grant usage on schema ${q(schema)} to atoms_ro`);
+    await client.query(`grant select on all tables in schema ${q(schema)} to atoms_ro`);
+    // 项目角色以后新建的表，也自动可被只读角色读取
+    await client.query(
+      `alter default privileges in schema ${q(schema)} grant select on tables to atoms_ro`,
+    );
+  } finally {
+    await client.end();
+  }
 }
 
 /**
@@ -99,7 +155,7 @@ export async function ensureProjectRole(schema: string): Promise<string> {
     );
   }
 
-  await grantOwnerRights(schema, role);
+  await grantOwnerRights(schema, role, password);
   return role;
 }
 
@@ -108,7 +164,6 @@ export async function ensureDevSchema(projectId: string): Promise<string> {
   const schema = devSchemaFor(projectId);
   await appQuery(`create schema if not exists ${q(schema)}`);
   await ensureProjectRole(schema);
-  await grantToReadonly(schema);
   return schema;
 }
 
@@ -117,7 +172,6 @@ export async function ensureAppSchema(projectId: string): Promise<string> {
   const schema = prodSchemaFor(projectId);
   await appQuery(`create schema if not exists ${q(schema)}`);
   await ensureProjectRole(schema);
-  await grantToReadonly(schema);
   return schema;
 }
 
@@ -149,7 +203,6 @@ export async function provisionAllProjectRoles(): Promise<number> {
   let n = 0;
   for (const row of r.rows) {
     await ensureProjectRole(row.nspname);
-    await grantToReadonly(row.nspname);
     n += 1;
   }
   return n;

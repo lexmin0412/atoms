@@ -193,10 +193,17 @@ files (id, project_id, pid, name, type['file'|'dir'], path, content, version, up
 **schema 命名**：`p{projectId}_{dev|prod}`（完整 projectId → 零碰撞；长度 ~41，低于 63 字节上限）
 
 **每项目独立数据库角色**（安全边界，迭代 007）：每个 schema 配一个登录角色 `r_p{projectId}_{dev|prod}`，
-凭据存平台库 `project_db_roles`。角色**不拥有 schema**，只被授予本 schema 的 `usage/create` + 表/序列增删改查
-（`alter default privileges` 覆盖后续建的表），并 `revoke usage on schema public`。
+凭据存平台库 `project_db_roles`。角色被授予本 schema 的 `usage/create`，并 `revoke usage on schema public`。
 `databaseUrlFor()` 用该角色拼连接串 —— 容器（开发沙箱 / devapp / 发布容器）即使读到 `DATABASE_URL`，
 也**只能访问自己项目的 schema**。前置：管理角色需 `CREATEROLE`。
+
+- **schema 内的对象归项目角色所有**（`alter table/sequence ... owner to`）：生成的 app 启动时通常自己跑迁移
+  （`create table if not exists` + `alter table add column` / `create index`），而 `alter` 系列**需要表的所有权** ——
+  只授增删改查会报 `must be owner of table`（线上真实事故）。schema 本身仍归管理角色，所以项目角色删不掉 schema、也越不了界。
+- 转移所有权需要能 `SET ROLE` 到目标角色：provisioning 会显式 `grant <role> to <admin> with set true`
+  （PG16 的历史成员关系默认不含 SET 权限）。
+- `atoms_ro` 的读权限由**项目角色自己**的短连接授出（只有 owner 能授权），不走 `SET ROLE`。
+- `alter default privileges` 覆盖后续新建的表/序列。
 - `_dev`：开发沙箱（Agent 边写边跑，可随意折腾）
 - `_prod`：发布容器（数据受保护；发布时从空开始）
 - 数据库查看器分「开发 / 生产」，**仅当该 schema 有业务表时才显示入口**

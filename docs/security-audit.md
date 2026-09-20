@@ -31,11 +31,16 @@
 
 **修复结果**（线上实测）
 - 每项目独立角色 `r_p<uuid>_{dev|prod}`，凭据存平台库 `project_db_roles`；
-  角色**不拥有 schema**，仅有本 schema 的 usage/create + 增删改查。
+  角色**不拥有 schema**（schema 归管理角色），仅有本 schema 的 usage/create + 增删改查。
 - 容器 env 已切换：`postgres://r_p<uuid>_prod:***@...`（不再是 `atoms`）。
 - 越权验证：读/建他人 schema → `permission denied`；删自己 schema → `must be owner`。
 - 存量 12 个 schema 已回填；`atoms` 密码已**轮换**，3 个 URL 同步更新，已发布容器已用新凭据重建。
 - 前置条件：生产 `atoms` 角色需要 `CREATEROLE`（`alter role atoms createrole`）。
+
+**回归修复（008 前）**：schema 内的**表/序列所有权已转给项目角色**，`atoms_ro` 由项目角色自己授权。
+原因：生成的 app 启动时会跑 `alter table add column` 之类的自迁移，只有增删改查权限会报
+`must be owner of table orders` → 应用整体启动失败（devapp 与发布容器都挂过）。
+隔离性不变：越权验证复测仍全部 `permission denied`。
 
 **现状**
 - 开发沙箱、devapp、发布容器启动时都注入 `DATABASE_URL`（`apps/sandbox/src/workspace.ts:51`、`release.ts:134,227`）。
