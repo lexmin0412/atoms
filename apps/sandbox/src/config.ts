@@ -41,6 +41,7 @@ if (!config.secret) {
 
 export const SKIP_DIRS = new Set([
   'node_modules',
+  '.pnpm-store',
   '.git',
   'dist',
   'build',

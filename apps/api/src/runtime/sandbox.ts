@@ -1,7 +1,22 @@
+import { createHash } from 'node:crypto';
+
 import type { FileMap, Runtime, Workspace, ExecChunk } from '@atoms/shared';
 
 import { applyEdit } from './edit';
 import { SandboxError, signedFetch, signedJson } from './http';
+
+/** 恢复工作区时的并发写上限：越大越快，但要给隧道/沙箱留余量 */
+const WRITE_CONCURRENCY = 16;
+
+const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+
+/** 与沙箱侧 `wsDigest` 必须完全一致：路径排序后 `path\0hash` 以 \n 连接再取 sha256 */
+function digestOf(hashes: Record<string, string>): string {
+  const lines = Object.keys(hashes)
+    .sort()
+    .map((p) => `${p}\u0000${hashes[p]}`);
+  return createHash('sha256').update(lines.join('\n')).digest('hex');
+}
 
 /**
  * Design 2 实现：对接 B 机沙箱服务。
@@ -22,9 +37,53 @@ export class SandboxRuntime implements Runtime {
     // 只写入，不删除：DB 可能因上一轮生成中断而是过期/空的，
     // 若在此按 DB 清理沙箱，会把尚未落库的成果误删（真实事故）。
     // 删除由文件管理的显式操作（rename/delete）精确同步。
-    for (const [path, content] of Object.entries(files)) {
-      await this.writeFile(ws, path, content);
+    //
+    // 增量同步：A↔B 只有 ~1Mbps（实测 A→B 150KB/s），整仓重传要几分钟（3381 个文件
+    // 曾把「打开项目自动拉起预览」拖到超时失败）。沙箱盘上的工作区是持久的，所以：
+    //   1) 先比整仓摘要（64 字节）——一致就一个字节都不用传；
+    //   2) 不一致再传清单（路径+哈希），由 B 回「需要写的文件」。
+    const local: Record<string, string> = {};
+    for (const [path, content] of Object.entries(files)) local[path] = sha256(content);
+    let writePaths: string[] | null = null;
+    const remoteDigest = await signedJson<{ digest: string }>(
+      `/sandbox/${id}/ws-digest`,
+      {
+        method: 'GET',
+      },
+    )
+      .then((r) => r.digest)
+      .catch(() => null);
+    if (remoteDigest === null) {
+      writePaths = null; // 摘要都取不到：退回全量写，正确性优先
+    } else if (remoteDigest === digestOf(local)) {
+      writePaths = []; // 已在同步状态：无需上传
+    } else {
+      writePaths = await signedJson<{ write: string[] }>(`/sandbox/${id}/sync-plan`, {
+        method: 'POST',
+        body: JSON.stringify({ hashes: local }),
+      })
+        .then((r) => r.write)
+        .catch(() => null);
     }
+    const entries =
+      writePaths === null
+        ? Object.entries(files)
+        : writePaths
+            .map((p) => [p, files[p]] as const)
+            .filter((e): e is readonly [string, string] => typeof e[1] === 'string');
+    let next = 0;
+    const worker = async () => {
+      while (true) {
+        const i = next++;
+        if (i >= entries.length) return;
+        const entry = entries[i];
+        if (!entry) continue;
+        await this.writeFile(ws, entry[0], entry[1]);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(WRITE_CONCURRENCY, entries.length) }, worker),
+    );
     return ws;
   }
 

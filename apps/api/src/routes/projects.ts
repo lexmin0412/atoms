@@ -31,6 +31,9 @@ projectRoutes.use('*', requireUser);
 
 const createSchema = z.object({ title: z.string().min(1).max(120) });
 
+/** 打开项目时愿意为「恢复工作区」等待的上限；超时且盘上已有源码就先启动预览 */
+const WORKSPACE_WAIT_MS = 20_000;
+
 projectRoutes.get('/', async (c) => {
   const user = c.get('user');
   const r = await query(
@@ -464,11 +467,13 @@ projectRoutes.post('/:id/devapp', async (c) => {
 
   // 仅在项目含 apps/api 时启动
   let hasBackend: boolean;
+  let workspaceHasFiles: boolean;
   try {
     const listing = await signedJson<{ files: string[] }>(`/sandbox/${id}/files`, {
       method: 'GET',
     });
     hasBackend = listing.files.some((f) => f.startsWith('apps/api/'));
+    workspaceHasFiles = listing.files.length > 0;
   } catch (err) {
     // 探测失败时绝不能当成“纯前端”，否则含后端的应用会被发成残废版本
     return fail(c, err);
@@ -476,11 +481,27 @@ projectRoutes.post('/:id/devapp', async (c) => {
   if (!hasBackend) return c.json({ hasBackend: false, ready: true });
 
   const schema = await ensureDevSchema(id);
-  // 先确保开发沙箱存在（可能已被空闲回收）
-  try {
-    await acquireWorkspace(id);
-  } catch (err) {
-    return fail(c, err);
+  // 先确保开发沙箱存在（可能已被空闲回收）。整仓恢复要逐个写回数千个文件，
+  // 这里只等一小段：若超时且沙箱盘上已有源码，就先让预览可用、同步在后台继续
+  // （DB 仍是唯一事实源，用户点「重新构建」会再对齐一次）。
+  let warmErr: unknown = null;
+  const warm = await Promise.race([
+    acquireWorkspace(id)
+      .then(() => 'ok' as const)
+      .catch((err: unknown) => {
+        warmErr = err;
+        return 'err' as const;
+      }),
+    new Promise<'slow'>((r) => setTimeout(() => r('slow'), WORKSPACE_WAIT_MS)),
+  ]);
+  if (warm === 'err') return fail(c, warmErr);
+  if (warm === 'slow') {
+    if (!workspaceHasFiles)
+      return fail(
+        c,
+        new SandboxError(503, 'sandbox_unreachable', '运行环境暂时不可用，请稍后重试'),
+      );
+    logErr('[devapp] 工作区同步较慢，先启动预览后端:', id);
   }
   try {
     await getSandboxRuntime().startDevApp(id, await databaseUrlFor(schema));

@@ -16,19 +16,22 @@ import {
   devAppTarget,
 } from './release';
 import {
+  destroySandbox,
+  distVersion,
   docker,
   ensureSandbox,
-  destroySandbox,
   execStream,
+  hashWsFiles,
   isSandboxRunning,
-  readWsFile,
-  writeWsFile,
-  removeWsPath,
   listWsFiles,
-  snapshotWorkspace,
   readDistFile,
-  distVersion,
+  readWsFile,
+  removeWsPath,
   snapshotDist,
+  snapshotWorkspace,
+  writeWsFile,
+  wsDigest,
+  wsSyncPlan,
 } from './workspace';
 
 /** 反代超时：后端卡死时不要一直挂着 */
@@ -175,6 +178,19 @@ app.delete('/sandbox/:id/file', async (c) => {
   if (!path) return c.json({ error: 'path_required' }, 400);
   await removeWsPath(c.req.param('id'), path);
   return c.json({ ok: true });
+});
+
+app.get('/sandbox/:id/ws-digest', async (c) => {
+  return c.json({ digest: await wsDigest(c.req.param('id')) });
+});
+
+app.post('/sandbox/:id/sync-plan', async (c) => {
+  const { hashes } = body<{ hashes?: Record<string, string> }>(c);
+  return c.json({ write: await wsSyncPlan(c.req.param('id'), hashes ?? {}) });
+});
+
+app.get('/sandbox/:id/file-hashes', async (c) => {
+  return c.json({ hashes: await hashWsFiles(c.req.param('id')) });
 });
 
 app.get('/sandbox/:id/files', async (c) => {

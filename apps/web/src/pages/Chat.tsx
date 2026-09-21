@@ -413,8 +413,14 @@ export default function Chat() {
     lastInputTokens: number | null;
   } | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
-  /** 开发预览后端的状态：none=该项目无后端，starting=启动中，ready=就绪 */
-  const [backend, setBackend] = useState<'none' | 'starting' | 'ready'>('none');
+  /** 开发预览后端的状态：none=该项目无后端，starting=启动中，ready=就绪，failed=启动失败 */
+  const [backend, setBackend] = useState<'none' | 'starting' | 'ready' | 'failed'>(
+    'none',
+  );
+  /** 自增即重跑「确保后端在跑」的副作用（用于失败后手动重试） */
+  const [backendRetry, setBackendRetry] = useState(0);
+  const [rebuilding, setRebuilding] = useState(false);
+  const [rebuildNotice, setRebuildNotice] = useState('');
   const [stepsDraft, setStepsDraft] = useState('');
   const [stepsSaving, setStepsSaving] = useState(false);
   const [stepsNotice, setStepsNotice] = useState('');
@@ -555,7 +561,9 @@ export default function Chat() {
         setBackend('starting');
         poll();
       } catch {
-        if (!cancelled) setBackend('none');
+        // 不能当成「纯前端项目」：否则含后端的应用会静默降级，用户既看不到错误
+        // 也没有可操作的入口。给出失败态 + 「重新构建 / 重试启动」。
+        if (!cancelled) setBackend('failed');
       }
     })();
     return () => {
@@ -563,7 +571,7 @@ export default function Chat() {
       stopPolling();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, backendRetry]);
 
   // 生成过程中轮询构建产物版本，一旦变化就刷新预览（实时化）
   useEffect(() => {
@@ -579,6 +587,25 @@ export default function Chat() {
     }, 3000);
     return () => clearInterval(t);
   }, [id, busy]);
+
+  /** 重新构建：前端构建 + 重启预览后端（后端挂掉时用户唯一的自助入口） */
+  async function rebuildPreview() {
+    if (!id || rebuilding || busy) return;
+    setRebuilding(true);
+    setRebuildNotice('');
+    try {
+      await api.rebuild(id);
+      setRebuildNotice('构建完成，正在刷新预览…');
+      setPreviewVersion((v) => v + 1);
+      // 后端已被重启：重新走一遍「确保在跑」并轮询到就绪
+      setBackendRetry((n) => n + 1);
+    } catch (err) {
+      setBackend('failed');
+      setRebuildNotice(err instanceof Error ? err.message : '构建失败，请重试');
+    } finally {
+      setRebuilding(false);
+    }
+  }
 
   async function publish() {
     if (!id || publishing) return;
@@ -1009,6 +1036,28 @@ export default function Chat() {
                   </span>
                 </div>
                 <button
+                  onClick={rebuildPreview}
+                  disabled={rebuilding || busy}
+                  title="重新构建（前端构建 + 重启后端）"
+                  className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex h-6 shrink-0 items-center gap-1 rounded-xs px-1.5 text-[11px] transition-colors disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M14.5 5.5a4 4 0 0 0 5 5L21 12l-8.5 8.5a2.1 2.1 0 0 1-3-3L18 9" />
+                    <path d="m6.5 6.5 3 3" />
+                  </svg>
+                  {rebuilding ? '构建中…' : '重新构建'}
+                </button>
+                <button
                   onClick={() => setPreviewVersion((v) => v + 1)}
                   aria-label="刷新预览"
                   className="text-muted-foreground hover:bg-muted hover:text-foreground grid size-6 shrink-0 place-items-center rounded-xs transition-colors"
@@ -1051,14 +1100,39 @@ export default function Chat() {
                   </svg>
                 </a>
               </div>
-              {backend === 'starting' && (
+              {(backend === 'starting' || rebuilding) && (
                 <div className="border-border bg-warn/8 text-muted-foreground flex shrink-0 items-center gap-2 border-b px-3 py-1 text-[11.5px]">
                   <span
                     className="size-1.5 shrink-0 animate-pulse rounded-full"
                     style={{ background: 'var(--warn)' }}
                     aria-hidden
                   />
-                  后端启动中…（首次需要装依赖，约 10~30 秒，就绪后会自动刷新）
+                  {rebuildNotice ||
+                    (rebuilding
+                      ? '重新构建中…（前端构建 + 重启后端）'
+                      : '后端启动中…（首次需要装依赖，约 10~30 秒，就绪后会自动刷新）')}
+                </div>
+              )}
+              {backend === 'failed' && !rebuilding && (
+                <div className="border-danger/30 bg-danger/8 text-danger flex shrink-0 items-center gap-2 border-b px-3 py-1 text-[11.5px]">
+                  <span
+                    className="size-1.5 shrink-0 rounded-full"
+                    style={{ background: 'var(--danger)' }}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1 truncate">
+                    {rebuildNotice ||
+                      '预览后端启动失败（源码同步或依赖安装出错），可点「重新构建」重试。'}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setRebuildNotice('');
+                      setBackendRetry((n) => n + 1);
+                    }}
+                    className="hover:bg-muted hover:text-foreground shrink-0 rounded-xs px-1.5 py-0.5 transition-colors"
+                  >
+                    重试启动
+                  </button>
                 </div>
               )}
               {previewSrc && hasBuild ? (

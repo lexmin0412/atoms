@@ -1,4 +1,5 @@
 import { spawn, execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile, readdir, rm, stat } from 'node:fs/promises';
 import { join, resolve, relative, dirname, extname } from 'node:path';
 import { promisify } from 'node:util';
@@ -97,11 +98,13 @@ export async function ensureSandbox(id: string, databaseUrl?: string) {
     // 启动时把镜像里的全局 npmrc 镜像过去，保证两边配置一致。
     `mkdir -p ${containerPrefix}/etc && cp -f /usr/local/etc/npmrc ${containerPrefix}/etc/npmrc 2>/dev/null; exec sleep infinity`,
   ]);
+  invalidateRunningCache();
 }
 
 /** 只删容器（保留工作区目录，便于自愈重建） */
 export async function stopSandbox(id: string) {
   await docker(['rm', '-f', containerName(id)]).catch(() => {});
+  invalidateRunningCache();
 }
 
 /** 删容器 + 删工作区目录 */
@@ -111,15 +114,30 @@ export async function destroySandbox(id: string) {
 }
 
 /**
+ * `docker ps` 结果缓存：并发闸门（ensureCapacity）在**写文件**这类高频路径上也会调用，
+ * 每次都拉起 docker CLI 会让单次写文件从 ~10ms 变成 ~1s（实测平均 972ms、最大 13.6s，
+ * 恢复一个 3381 文件的仓库要 3.5 分钟，前端等不到自动拉起就超时了）。
+ * 2s 的陈旧度对并发上限判断没有实际影响。
+ */
+let runningCache: { at: number; ids: string[] } | null = null;
+const RUNNING_CACHE_MS = 2_000;
+
+function invalidateRunningCache() {
+  runningCache = null;
+}
+
+/**
  * 当前运行中的开发沙箱 id 列表。
  * 注意：docker 的 `name=atoms-` 是子串匹配，会连带命中
  * `atoms-devapp-<id>`（开发预览后端）与 `atoms-release-<id>`（已发布应用），
  * 这两类不算开发沙箱名额，必须排除，否则并发闸门会被误占满。
  */
 export async function listRunningSandboxIds(): Promise<string[]> {
+  const now = Date.now();
+  if (runningCache && now - runningCache.at < RUNNING_CACHE_MS) return runningCache.ids;
   try {
     const out = await docker(['ps', '--filter', 'name=atoms-', '--format', '{{.Names}}']);
-    return out
+    const ids = out
       .split('\n')
       .map((s) => s.trim())
       .filter(
@@ -129,6 +147,8 @@ export async function listRunningSandboxIds(): Promise<string[]> {
           !n.startsWith('atoms-release-'),
       )
       .map((n) => n.replace(/^atoms-/, ''));
+    runningCache = { at: now, ids };
+    return ids;
   } catch {
     return [];
   }
@@ -219,6 +239,54 @@ export async function listWsFiles(id: string): Promise<string[]> {
   }
   await walk(base);
   return out.sort();
+}
+
+/**
+ * 工作区内每个文件的内容哈希（跳过 SKIP_DIRS）。
+ * A 机出口带宽很小（实测 ~150KB/s），整仓重传要几分钟；恢复工作区前先用它
+ * 比对，只上传缺失/内容不同的文件——正常情况下一个字节都不用传。
+ */
+export async function hashWsFiles(id: string): Promise<Record<string, string>> {
+  const base = wsDir(id);
+  const out: Record<string, string> = {};
+  async function walk(dir: string) {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (SKIP_DIRS.has(e.name)) continue;
+      const full = join(dir, e.name);
+      if (e.isDirectory()) {
+        await walk(full);
+        continue;
+      }
+      const buf = await readFile(full).catch(() => null);
+      if (buf) out[relative(base, full)] = createHash('sha256').update(buf).digest('hex');
+    }
+  }
+  await walk(base);
+  return out;
+}
+
+/** 整仓摘要：对「路径+内容哈希」排序后取一次 sha256，A 侧用同一算法比对 */
+export async function wsDigest(id: string): Promise<string> {
+  const hashes = await hashWsFiles(id);
+  const lines = Object.keys(hashes)
+    .sort()
+    .map((p) => `${p}\u0000${hashes[p]}`);
+  return createHash('sha256').update(lines.join('\n')).digest('hex');
+}
+
+/** 对比 A 侧清单：返回需要上传（缺失或内容不同）的文件路径 */
+export async function wsSyncPlan(
+  id: string,
+  want: Record<string, string>,
+): Promise<string[]> {
+  const have = await hashWsFiles(id);
+  return Object.keys(want).filter((p) => have[p] !== want[p]);
 }
 
 export async function snapshotWorkspace(id: string) {
