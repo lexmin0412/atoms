@@ -11,9 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 版本交给 package.json 的 packageManager 字段（两处都写会报
+      # "Multiple versions of pnpm specified" 导致 CI 直接失败）
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
