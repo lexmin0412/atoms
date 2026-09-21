@@ -35,8 +35,10 @@ import type { Env } from './auth';
 const MAX_STEPS = 500;
 /** 推理空转保护阈值（字符）：超过且无任何正文/工具调用就中止本轮 */
 const REASONING_GUARD_CHARS = 12_000;
-/** 单轮最长时长上限：上游卡死时避免前端一直转圈（到点按中止处理，已完成的改动已落库） */
-const MAX_ROUND_MS = Number(process.env.CHAT_MAX_ROUND_MS ?? 15 * 60 * 1000);
+/** 单轮最长时长上限：上游卡死时避免前端一直转圈（到点优雅停止，已完成的改动已落库）。
+ *  注意要留足「大任务一轮做完」的时间：实测生成一个完整应用要 10~30 分钟，限制太小
+ *  会在收尾（写总结）时把轮次掐掉，用户看到的就是「跑完了却报错」。 */
+const MAX_ROUND_MS = Number(process.env.CHAT_MAX_ROUND_MS ?? 30 * 60 * 1000);
 
 export const chatRoutes = new Hono<Env>();
 
@@ -204,8 +206,16 @@ chatRoutes.post('/:id/chat', async (c) => {
    * （实测 5 万字、里面全是 tsconfig/组件代码），推理无限膨胀把上游流撑断 → 报
    * `Failed to process successful response`，而失败又留下新的半截推理，形成恶性循环。
    */
+  const roundStart = Date.now();
   let reasoningGuardTripped = false;
+  /** 本轮是否因「单轮超时」被停止（要和用户主动点停止区分开，否则提示会误导） */
+  let roundTimedOut = false;
   const roundAbort = new AbortController();
+  const roundTimer = setTimeout(() => {
+    roundTimedOut = true;
+    roundAbort.abort();
+  }, MAX_ROUND_MS);
+  roundTimer.unref?.();
   /** 本轮是否因为撞到步数上限而停止（前端据此给出明确提示，而不是「莫名停了」） */
   let stepsExceeded = false;
   /** 本轮实际输入 token（前端「上下文用量」显示这个数） */
@@ -347,9 +357,8 @@ chatRoutes.post('/:id/chat', async (c) => {
         // 否则服务端会继续烧 token、继续占用沙箱（曾导致并发池被占满、后续消息全部失败）；
         // 同时叠加单轮最长时长，避免上游卡死时前端无限等待。
         abortSignal: AbortSignal.any([
-          c.req.raw.signal,
-          AbortSignal.timeout(MAX_ROUND_MS),
-          roundAbort.signal, // 推理空转保护用
+          c.req.raw.signal, // 用户点「停止」/ 关页面
+          roundAbort.signal, // 单轮超时 + 推理空转保护
         ]),
         // 历史里可能有被中断的悬空工具调用：不修就会一直报 Tool result is missing
         messages: await convertToModelMessages(repairHistory(pruned)),
@@ -462,7 +471,23 @@ chatRoutes.post('/:id/chat', async (c) => {
           }
         }
       } finally {
+        clearTimeout(roundTimer);
         flushDelta();
+        // abortSignal 触发时 SDK 既不报错也不调用 onError —— 必须自己补一条明确提示，
+        // 否则用户只看到「它自己就停了」（真实投诉：达到限制后静默结束）。
+        if (roundTimedOut || reasoningGuardTripped) {
+          const notice = roundTimedOut
+            ? '本轮用时已达上限自动停止；已完成的内容都已保存，回复「继续」可以接着做。'
+            : '模型本轮一直在「想」而没有动手（只输出推理、没有进展），已中止。请再发一次，或把要求拆得更具体一些。';
+          console.log(
+            `[chat] ${roundTimedOut ? '单轮超时' : '推理空转'}停止 ${projectId}（${Math.round((Date.now() - roundStart) / 1000)}s、${steps.count} 步）`,
+          );
+          try {
+            writer.write({ type: 'error', errorText: notice } as never);
+          } catch {
+            // 客户端已断开：忽略
+          }
+        }
         settledCredits = await settle();
         if (contextTokens) void saveInputTokens(projectId, contextTokens);
         if (settledCredits > 0) {
@@ -508,15 +533,29 @@ chatRoutes.post('/:id/chat', async (c) => {
       clearBusy(projectId);
     },
     onError: (err) => {
-      const aborted =
-        c.req.raw.signal.aborted ||
-        (err instanceof Error &&
-          (err.name === 'AbortError' || /abort/i.test(err.message)));
-      if (aborted) {
-        console.log(`[chat] 客户端中止生成 ${projectId}（已结算并停止工具执行）`);
+      clearTimeout(roundTimer);
+      const elapsed = Math.round((Date.now() - roundStart) / 1000);
+      // 三种「主动中止」要分清：用户点停止 / 单轮超时 / 推理空转保护。
+      // 之前混作一谈，超时被记成「客户端中止」，用户只看到笼统的「模型服务不可用」。
+      const clientGone = c.req.raw.signal.aborted;
+      const isAbortish =
+        err instanceof Error && (err.name === 'AbortError' || /abort/i.test(err.message));
+      if (roundTimedOut) {
+        console.log(
+          `[chat] 单轮超时停止 ${projectId}（已运行 ${elapsed}s、${steps.count} 步；已完成内容已落库）`,
+        );
+      } else if (reasoningGuardTripped) {
+        console.log(`[chat] 推理空转停止 ${projectId}（${elapsed}s、${steps.count} 步）`);
+      } else if (clientGone || isAbortish) {
+        console.log(
+          `[chat] 客户端中止生成 ${projectId}（已运行 ${elapsed}s、${steps.count} 步）`,
+        );
       } else {
         // errLine 已展开 name/status/body/cause 链 —— 上游真实原因都在这里
-        logErr(`[chat] stream error ${projectId}:`, err);
+        logErr(
+          `[chat] stream error ${projectId}（${elapsed}s、${steps.count} 步）:`,
+          err,
+        );
       }
       clearBusy(projectId);
       // 上游中断也要按实际用量结算（若 onEnd 未触发）
@@ -532,10 +571,13 @@ chatRoutes.post('/:id/chat', async (c) => {
           )
           .catch((e) => logErr('[chat] 中断补偿快照失败:', e));
       }, 3000);
+      if (roundTimedOut) {
+        return '本轮用时已达上限（默认 30 分钟）自动停止；已完成的内容都已保存，回复「继续」可以接着做。';
+      }
       if (reasoningGuardTripped) {
         return '模型本轮一直在「想」而没有动手（只输出推理、没有进展），已中止。请再发一次，或把要求拆得更具体一些。';
       }
-      if (aborted) return '已停止生成。';
+      if (clientGone || isAbortish) return '已停止生成。';
       const msg = err instanceof Error ? err.message : String(err);
       if (/MissingSessionID|401|403/i.test(msg)) {
         return '模型服务鉴权失败，请联系管理员。';
