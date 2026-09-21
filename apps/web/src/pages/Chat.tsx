@@ -137,19 +137,19 @@ function friendlyError(msg: string): string {
     return '积分已用完，额度会在下个周期自动恢复。';
   }
   if (/busy|并发|上限/.test(msg)) {
-    return '同时运行的项目较多，请稍后重试（空闲项目会自动回收）。';
+    return '同时运行的项目较多，稍后回复「继续」即可接着做（空闲项目会自动回收）。';
   }
   if (/模型服务繁忙|额度不足/.test(msg)) {
-    return '模型服务繁忙（上游限流），请稍后重试。';
+    return '模型服务繁忙（上游限流），稍后回复「继续」即可接着做。';
   }
   if (/模型服务鉴权失败/.test(msg)) {
     return msg;
   }
   if (/连接中断|ECONNRESET|fetch failed|stream ended|timeout/i.test(msg)) {
-    return '与模型服务的连接中断，请重试。';
+    return '与模型服务的连接中断，回复「继续」即可接着做。';
   }
   if (/error|failed|fetch|network|stream|timeout/i.test(msg)) {
-    return '模型服务暂时不可用，请重试。';
+    return '模型服务暂时不可用，回复「继续」即可接着做。';
   }
   return msg;
 }
@@ -1421,20 +1421,10 @@ export default function Chat() {
           })}
 
           {error && friendlyError(error.message) !== '已停止生成。' && (
-            <div className="panel border-danger/35 bg-danger/6 flex items-center gap-3 px-3 py-2">
-              <span className="text-danger text-[12.5px]">
+            <div className="panel border-danger/35 bg-danger/6 px-3 py-2">
+              <span className="text-danger text-[12.5px] leading-relaxed">
                 {friendlyError(error.message)}
               </span>
-              {messages.length > 0 && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-danger"
-                  onClick={() => regenerate()}
-                >
-                  重试
-                </Button>
-              )}
             </div>
           )}
           <div ref={bottomRef} />
