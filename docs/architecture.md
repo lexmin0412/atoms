@@ -287,7 +287,7 @@ PUT/DELETE /api/skills/:id           改 / 删
   深度清洗**（转义后洗不掉）。
 - **可观测**：每轮打印「上下文 N 条 X 字 → 送模型 Y 字（裁剪 Z%）」；达到步数上限会记录日志。
 
-**Agent 设置（每项目）**：`projects.max_steps`（默认 30，可 5~200）由用户在对话头部
+**Agent 设置（每项目）**：`projects.max_steps`（默认 500，可 100~1000）由用户在对话头部
 「上下文」面板里调整；`GET/PATCH /api/projects/:id/agent` 读写。
 面板同时显示 **上下文用量** `[当前使用]/[模型窗口]`：窗口来自 models.dev（可用
 `MODEL_CONTEXT_LIMIT` 覆盖），当前值取上一轮真实 `inputTokens`，生成中按同规则实时估算。

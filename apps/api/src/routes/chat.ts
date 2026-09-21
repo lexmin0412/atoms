@@ -32,7 +32,7 @@ import { createTools } from '../tools';
 import type { Env } from './auth';
 
 /** 单轮最多跑多少步（含工具往返）；到顶会停下并记录日志，用户可继续下一轮 */
-const MAX_STEPS = 30;
+const MAX_STEPS = 500;
 /** 单轮最长时长上限：上游卡死时避免前端一直转圈（到点按中止处理，已完成的改动已落库） */
 const MAX_ROUND_MS = Number(process.env.CHAT_MAX_ROUND_MS ?? 15 * 60 * 1000);
 
@@ -196,6 +196,8 @@ chatRoutes.post('/:id/chat', async (c) => {
   // 结算（一次性，onEnd / onError 都可能触发，用 memo 防重复扣）
   let usagePromise: PromiseLike<LanguageModelUsage> | null = null;
   let budgetExceeded = false;
+  /** 本轮是否因为撞到步数上限而停止（前端据此给出明确提示，而不是「莫名停了」） */
+  let stepsExceeded = false;
   /** 本轮实际输入 token（前端「上下文用量」显示这个数） */
   /** 上下文大小：单步输入 token 的最大值（多步之和会重复计算同一份上下文） */
   let contextTokens = 0;
@@ -342,6 +344,7 @@ chatRoutes.post('/:id/chat', async (c) => {
         stopWhen: [
           ({ steps }) => {
             if (steps.length >= maxSteps) {
+              stepsExceeded = true;
               console.log(
                 `[chat] 达到步数上限 ${maxSteps}，停止本轮 ${projectId}（下一轮可继续；用户可在项目里调大）`,
               );
@@ -404,6 +407,9 @@ chatRoutes.post('/:id/chat', async (c) => {
                 credits: settledCredits,
                 ...(remaining === null ? {} : { balance: remaining }),
                 budgetExceeded,
+                // 撞到步数上限而停止：前端要明确告诉用户「为什么停了、怎么继续」
+                stepsExceeded,
+                stepsUsed: steps.count,
                 // 前端据此显示「上下文 x/y」：本轮真实上下文（单步输入最大值）
                 inputTokens: contextTokens || null,
                 contextLimit,

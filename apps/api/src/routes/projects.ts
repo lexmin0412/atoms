@@ -84,9 +84,9 @@ projectRoutes.get('/:id', async (c) => {
 });
 
 /** 每项目的 Agent 设置：最大步数（用户可配）+ 模型上下文窗口（给前端算上下文用量） */
-const MAX_STEPS_MIN = 5;
-const MAX_STEPS_MAX = 200;
-const DEFAULT_MAX_STEPS = 30;
+const MAX_STEPS_MIN = 100;
+const MAX_STEPS_MAX = 1000;
+const DEFAULT_MAX_STEPS = 500;
 
 projectRoutes.get('/:id/agent', async (c) => {
   const user = c.get('user');

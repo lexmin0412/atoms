@@ -267,11 +267,20 @@ function renderPart(part: Part, i: number, animating: boolean) {
 function creditsOf(parts: Part[]): {
   credits: number;
   budgetExceeded: boolean;
+  stepsExceeded?: boolean;
+  stepsUsed?: number;
+  maxSteps?: number;
 } | null {
   for (let i = parts.length - 1; i >= 0; i -= 1) {
     const p = parts[i];
     if (p.type === 'data-credits' && p.data) {
-      return p.data as { credits: number; budgetExceeded: boolean };
+      return p.data as {
+        credits: number;
+        budgetExceeded: boolean;
+        stepsExceeded?: boolean;
+        stepsUsed?: number;
+        maxSteps?: number;
+      };
     }
   }
   return null;
@@ -300,6 +309,9 @@ function MessageFooter({
     <div className="text-muted-foreground mt-2 flex items-center gap-3 text-[11.5px]">
       {c && <span className="tnum">本次消耗 {c.credits.toFixed(2)} 积分</span>}
       {c?.budgetExceeded && <Badge tone="warn">额度用尽，已中断</Badge>}
+      {c?.stepsExceeded && (
+        <Badge tone="warn">已达步数上限 {c.maxSteps ?? ''}，本轮已停止</Badge>
+      )}
       <span
         className="border-border inline-flex items-center gap-1 rounded-xs border px-1.5 py-0.5 text-[10.5px]"
         title="由 Atoms Agent 生成"
@@ -729,6 +741,26 @@ export default function Chat() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
+
+  /** 撞到步数上限而停止时，在输入框上方给出明确提示（否则用户以为「自己就停了」是 bug） */
+  const [stepsLimitNotice, setStepsLimitNotice] = useState<{
+    maxSteps?: number;
+    stepsUsed?: number;
+  } | null>(null);
+
+  // 从最后一条 assistant 消息里取「是否撞到步数上限」：与消息一起持久化，刷新后仍在
+  useEffect(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i];
+      if (m.role !== 'assistant') continue;
+      const c = creditsOf((m.parts ?? []) as Part[]);
+      setStepsLimitNotice(
+        c?.stepsExceeded ? { maxSteps: c.maxSteps, stepsUsed: c.stepsUsed } : null,
+      );
+      return;
+    }
+    setStepsLimitNotice(null);
+  }, [messages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1406,6 +1438,24 @@ export default function Chat() {
           <div ref={bottomRef} />
         </div>
 
+        {stepsLimitNotice && (
+          <div className="border-warn/30 bg-warn/10 text-warn mx-3.5 mb-2 flex items-start gap-2 rounded-xs border px-2.5 py-1.5 text-[11.5px] leading-relaxed">
+            <span className="min-w-0 flex-1">
+              本轮已达到步数上限（{stepsLimitNotice.maxSteps ?? '—'} 步）并停止生成
+              {stepsLimitNotice.stepsUsed
+                ? `，实际执行 ${stepsLimitNotice.stepsUsed} 步`
+                : ''}
+              。回复「继续」可以接着做，也可以在右上角「上下文」面板里把上限调大。
+            </span>
+            <button
+              type="button"
+              onClick={() => setStepsLimitNotice(null)}
+              className="hover:bg-muted shrink-0 rounded-xs px-1.5 py-0.5 transition-colors"
+            >
+              知道了
+            </button>
+          </div>
+        )}
         <form
           ref={formRef}
           onSubmit={submit}
