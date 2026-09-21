@@ -130,6 +130,8 @@ function estimateTokens(messages: { parts?: unknown[] }[]): number {
 function friendlyError(msg: string): string {
   const structured = structuredMessage(msg);
   if (structured) return structured;
+  // 用户主动点「停止」/ 连接被中断：不是故障，别用「模型服务暂时不可用」吓人
+  if (/abort|aborted|已停止生成/i.test(msg)) return '已停止生成。';
   // 注意：这几种是不同原因，别合并成一句话（否则用户不知道该怎么办）
   if (/积分已用完|额度会在下个周期/.test(msg)) {
     return '积分已用完，额度会在下个周期自动恢复。';
@@ -1418,7 +1420,7 @@ export default function Chat() {
             );
           })}
 
-          {error && (
+          {error && friendlyError(error.message) !== '已停止生成。' && (
             <div className="panel border-danger/35 bg-danger/6 flex items-center gap-3 px-3 py-2">
               <span className="text-danger text-[12.5px]">
                 {friendlyError(error.message)}

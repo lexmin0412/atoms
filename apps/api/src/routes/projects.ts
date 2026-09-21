@@ -1,3 +1,4 @@
+import type { UIMessage } from 'ai';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 
@@ -5,6 +6,7 @@ import { isBusy } from '../agent-busy';
 import { requireUser } from '../auth';
 import { COMPRESS_RATIO } from '../compress';
 import { config } from '../config';
+import { repairHistory } from '../context';
 import { getModelInfo } from '../credits/pricing';
 import { query } from '../db';
 import {
@@ -183,11 +185,26 @@ projectRoutes.get('/:id/messages', async (c) => {
   const user = c.get('user');
   const project = await ownedProject(c.req.param('id'), user.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
-  const r = await query(
+  const r = await query<{
+    id: string;
+    seq: number;
+    role: string;
+    parts: unknown;
+    created_at: string;
+  }>(
     'select id, seq, role, parts, created_at from messages where project_id = $1 order by seq asc',
     [c.req.param('id')],
   );
-  return c.json({ messages: r.rows });
+  // 被中断的悬空工具调用在这里也修一遍：否则前端工具卡会一直停在「运行中」
+  const repaired = repairHistory(
+    r.rows.map((row) => ({ role: row.role, parts: row.parts }) as unknown as UIMessage),
+  );
+  return c.json({
+    messages: r.rows.map((row, i) => ({
+      ...row,
+      parts: repaired[i]?.parts ?? row.parts,
+    })),
+  });
 });
 
 /** 项目文件树 */

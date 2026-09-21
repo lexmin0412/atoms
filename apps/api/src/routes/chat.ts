@@ -13,7 +13,7 @@ import { clearBusy, markBusy } from '../agent-busy';
 import { requireUser } from '../auth';
 import { estimateTokens, maybeCompress, saveInputTokens } from '../compress';
 import { config } from '../config';
-import { pruneForModel } from '../context';
+import { pruneForModel, repairHistory } from '../context';
 import { currentPeriod, ensureGrant, spend } from '../credits';
 import {
   computeCredits,
@@ -33,6 +33,8 @@ import type { Env } from './auth';
 
 /** 单轮最多跑多少步（含工具往返）；到顶会停下并记录日志，用户可继续下一轮 */
 const MAX_STEPS = 500;
+/** 推理空转保护阈值（字符）：超过且无任何正文/工具调用就中止本轮 */
+const REASONING_GUARD_CHARS = 12_000;
 /** 单轮最长时长上限：上游卡死时避免前端一直转圈（到点按中止处理，已完成的改动已落库） */
 const MAX_ROUND_MS = Number(process.env.CHAT_MAX_ROUND_MS ?? 15 * 60 * 1000);
 
@@ -196,6 +198,14 @@ chatRoutes.post('/:id/chat', async (c) => {
   // 结算（一次性，onEnd / onError 都可能触发，用 memo 防重复扣）
   let usagePromise: PromiseLike<LanguageModelUsage> | null = null;
   let budgetExceeded = false;
+  /**
+   * 本轮是否触发了「推理空转」保护。
+   * 真实事故：对话历史被中断污染后，模型会误判状态，把整个实现写进推理块
+   * （实测 5 万字、里面全是 tsconfig/组件代码），推理无限膨胀把上游流撑断 → 报
+   * `Failed to process successful response`，而失败又留下新的半截推理，形成恶性循环。
+   */
+  let reasoningGuardTripped = false;
+  const roundAbort = new AbortController();
   /** 本轮是否因为撞到步数上限而停止（前端据此给出明确提示，而不是「莫名停了」） */
   let stepsExceeded = false;
   /** 本轮实际输入 token（前端「上下文用量」显示这个数） */
@@ -215,7 +225,9 @@ chatRoutes.post('/:id/chat', async (c) => {
         try {
           total = usagePromise ? await usagePromise : null;
         } catch (err) {
-          console.warn('[chat] 取整体 usage 失败:', (err as Error).message);
+          // 这里最常出现的是上游断流/被 SDK 包装过的错误：必须打印 cause 链，
+          // 否则线上只看到一句 "Failed to process successful response"（真实踩坑）。
+          logErr('[chat] 取整体 usage 失败:', err);
         }
         const picked = pickUsage(total, steps);
         if (!picked) return 0;
@@ -337,8 +349,10 @@ chatRoutes.post('/:id/chat', async (c) => {
         abortSignal: AbortSignal.any([
           c.req.raw.signal,
           AbortSignal.timeout(MAX_ROUND_MS),
+          roundAbort.signal, // 推理空转保护用
         ]),
-        messages: await convertToModelMessages(pruned),
+        // 历史里可能有被中断的悬空工具调用：不修就会一直报 Tool result is missing
+        messages: await convertToModelMessages(repairHistory(pruned)),
         tools,
         // 逐步检查：累计消耗达到起始余额即优雅停止本轮循环
         stopWhen: [
@@ -385,14 +399,70 @@ chatRoutes.post('/:id/chat', async (c) => {
       usagePromise = result.usage;
 
       // 手动转发：等内层流结束、结算完成后，再补发一条 data-credits
+      let reasoningChars = 0;
+      let sawProgress = false;
+      // 增量合并：模型一轮会产生上万个 reasoning/tool-input 增量（实测 3.4 万条），
+      // 前端 useChat 每条都要 setState + 重渲染，会被淹死（表现为「模型服务暂时不可用」）。
+      // 这里把同类增量攒到 ~4KB 再发一块，内容一字不改，事件数降两个数量级。
+      const DELTA_FIELDS: Record<string, string> = {
+        'reasoning-delta': 'delta',
+        'tool-input-delta': 'inputTextDelta',
+      };
+      const MAX_DELTA_CHARS = 4000;
+      let deltaBuf: {
+        part: Record<string, unknown>;
+        field: string;
+        text: string;
+        key: string;
+      } | null = null;
+      const flushDelta = () => {
+        if (!deltaBuf) return;
+        const { part, field, text } = deltaBuf;
+        deltaBuf = null;
+        writer.write({ ...part, [field]: text } as never);
+      };
       const reader = result.toUIMessageStream().getReader();
       try {
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
-          writer.write(value as never);
+          // 流内错误零件：把后端拿到的错误原因记下来（前端只会看到 errorText）
+          const part = value as { type?: string; errorText?: string; delta?: string };
+          if (part?.type === 'error') {
+            logErr('[chat] UI 流错误零件:', part.errorText ?? 'unknown');
+          }
+          // 推理空转保护：只涨推理、既没有正文也没有工具调用 → 判定失控，主动中止。
+          // （正常一轮的推理是几百到几千字；12000 字还没任何进展就是病态了）
+          if (part?.type === 'reasoning-delta') {
+            reasoningChars += (part.delta ?? '').length;
+            if (reasoningChars > REASONING_GUARD_CHARS && !sawProgress) {
+              reasoningGuardTripped = true;
+              roundAbort.abort();
+            }
+          } else if (part?.type === 'text-delta' || part?.type === 'tool-input-start') {
+            sawProgress = true;
+          }
+
+          const deltaField = DELTA_FIELDS[part?.type ?? ''];
+          if (deltaField) {
+            const raw = part as unknown as Record<string, unknown>;
+            const idField = part?.type === 'reasoning-delta' ? 'id' : 'toolCallId';
+            const key = `${part?.type}:${String(raw[idField] ?? '')}`;
+            const text = String(raw[deltaField] ?? '');
+            if (deltaBuf && deltaBuf.key === key) {
+              deltaBuf.text += text;
+              if (deltaBuf.text.length >= MAX_DELTA_CHARS) flushDelta();
+            } else {
+              flushDelta(); // 换目标前先冲刷，保证顺序
+              deltaBuf = { part: raw, field: deltaField, text, key };
+            }
+          } else {
+            flushDelta(); // 任何其他事件前先冲刷，保证顺序
+            writer.write(value as never);
+          }
         }
       } finally {
+        flushDelta();
         settledCredits = await settle();
         if (contextTokens) void saveInputTokens(projectId, contextTokens);
         if (settledCredits > 0) {
@@ -445,18 +515,8 @@ chatRoutes.post('/:id/chat', async (c) => {
       if (aborted) {
         console.log(`[chat] 客户端中止生成 ${projectId}（已结算并停止工具执行）`);
       } else {
+        // errLine 已展开 name/status/body/cause 链 —— 上游真实原因都在这里
         logErr(`[chat] stream error ${projectId}:`, err);
-        const e = err as {
-          statusCode?: number;
-          responseBody?: string;
-          cause?: unknown;
-        };
-        if (e.statusCode || e.responseBody || e.cause) {
-          logErr(
-            `[chat] 上游详情 ${projectId}:`,
-            `status=${e.statusCode ?? '-'} body=${String(e.responseBody ?? '').slice(0, 300)} cause=${String(e.cause ?? '').slice(0, 200)}`,
-          );
-        }
       }
       clearBusy(projectId);
       // 上游中断也要按实际用量结算（若 onEnd 未触发）
@@ -472,6 +532,9 @@ chatRoutes.post('/:id/chat', async (c) => {
           )
           .catch((e) => logErr('[chat] 中断补偿快照失败:', e));
       }, 3000);
+      if (reasoningGuardTripped) {
+        return '模型本轮一直在「想」而没有动手（只输出推理、没有进展），已中止。请再发一次，或把要求拆得更具体一些。';
+      }
       if (aborted) return '已停止生成。';
       const msg = err instanceof Error ? err.message : String(err);
       if (/MissingSessionID|401|403/i.test(msg)) {
@@ -485,6 +548,15 @@ chatRoutes.post('/:id/chat', async (c) => {
       }
       if (/ECONNRESET|fetch failed|stream ended|timeout/i.test(msg)) {
         return '与模型服务的连接中断，请重试。';
+      }
+      // 上游 2xx 但流被截断（网关侧）：给用户一句准确、可操作的说明，
+      // 不要笼统地说「模型服务暂时不可用」——避免误以为是平台故障。
+      if (
+        /Failed to process successful response|ended without a finish|not valid JSON/i.test(
+          msg,
+        )
+      ) {
+        return '上游响应中断，本轮已完成的内容已保存，请重试。';
       }
       return '生成过程中出现错误，请重试。';
     },

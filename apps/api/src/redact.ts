@@ -96,11 +96,39 @@ export function forbiddenReason(cmd: string): string | null {
  * pg 等库的错误对象常常带回连接串/参数，直接 console.error(err) 会落盘敏感信息。
  */
 export function errLine(err: unknown): string {
-  const e = err as { code?: string; message?: string; detail?: string } | undefined;
-  const parts = [e?.code, e?.message, e?.detail].filter(Boolean).join(' | ');
-  return scrubSecrets(parts || String(err))
+  const e = err as
+    | {
+        name?: string;
+        code?: string;
+        message?: string;
+        detail?: string;
+        statusCode?: number;
+        responseBody?: string;
+        cause?: unknown;
+      }
+    | undefined;
+  const parts = [e?.name, e?.code, e?.message, e?.detail].filter(Boolean);
+  if (e?.statusCode) parts.push(`status=${e.statusCode}`);
+  if (e?.responseBody) parts.push(`body=${e.responseBody.slice(0, 300)}`);
+  // AI SDK 只把上游故障包成一句笼统文案（例如 "Failed to process successful response"），
+  // 真实原因藏在 cause 里 —— 不展开 cause 就无法定位线上问题（真实踩坑）。
+  let cause: unknown = e?.cause;
+  let depth = 0;
+  while (cause && depth < 4) {
+    const c = cause as {
+      name?: string;
+      code?: string;
+      message?: string;
+      cause?: unknown;
+    };
+    const line = [c?.name, c?.code, c?.message].filter(Boolean).join(':');
+    parts.push(`cause[${depth}]=${line || String(cause)}`);
+    cause = c?.cause;
+    depth += 1;
+  }
+  return scrubSecrets(parts.join(' | ') || String(err))
     .replace(/\s+/g, ' ')
-    .slice(0, 400);
+    .slice(0, 800);
 }
 
 /** 统一的安全日志输出 */
