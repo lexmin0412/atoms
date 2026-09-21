@@ -1,15 +1,23 @@
 import {
-  streamText,
+  UIMessageChunk,
+  JsonToSseTransformStream,
+  UI_MESSAGE_STREAM_HEADERS,
   convertToModelMessages,
   createUIMessageStream,
-  createUIMessageStreamResponse,
+  streamText,
   type LanguageModelUsage,
   type UIMessage,
 } from 'ai';
 import { Hono } from 'hono';
 
 import { model, SYSTEM_PROMPT } from '../agent';
-import { clearBusy, markBusy } from '../agent-busy';
+import {
+  clearBusy,
+  markBusy,
+  registerRound,
+  supersedeRound,
+  unregisterRound,
+} from '../agent-busy';
 import { requireUser } from '../auth';
 import { estimateTokens, maybeCompress, saveInputTokens } from '../compress';
 import { config } from '../config';
@@ -137,6 +145,12 @@ chatRoutes.post('/:id/chat', async (c) => {
     );
   }
 
+  // 同一个项目同时只允许一个轮次在跑：两个请求共用上游 session 会被上游掐断，
+  // 表现为「回复半截」。新请求先把上一轮收尾（已生成内容照常落库）再开始。
+  if (await supersedeRound(projectId)) {
+    console.log(`[chat] 检测到同项目并发请求，已先收尾上一轮 ${projectId}`);
+  }
+
   const body = await c.req
     .json<{ messages?: UIMessage[]; skills?: string[] }>()
     .catch(() => null);
@@ -213,9 +227,14 @@ chatRoutes.post('/:id/chat', async (c) => {
   const roundAbort = new AbortController();
   const roundTimer = setTimeout(() => {
     roundTimedOut = true;
-    roundAbort.abort();
+    roundAbort.abort(new Error('round-timeout'));
   }, MAX_ROUND_MS);
   roundTimer.unref?.();
+  let resolveRoundDone = () => {};
+  const roundDone = new Promise<void>((resolve) => {
+    resolveRoundDone = resolve;
+  });
+  registerRound(projectId, roundAbort, roundDone);
   /** 本轮是否因为撞到步数上限而停止（前端据此给出明确提示，而不是「莫名停了」） */
   let stepsExceeded = false;
   /** 本轮实际输入 token（前端「上下文用量」显示这个数） */
@@ -268,7 +287,34 @@ chatRoutes.post('/:id/chat', async (c) => {
   const stream = createUIMessageStream({
     originalMessages: uiMessages,
     execute: async ({ writer }) => {
-      const tools = createTools(getRuntime(), ws, (part) => writer.write(part as never), {
+      // 所有下发都走 emit：客户端断开后静默丢弃（继续排空上游流，把这一轮跑完）
+      let writeFailed = false;
+      // 注意：这里**不能**因为客户端断开就丢弃写入 —— SDK 靠这些 part 拼出最终消息，
+      // 丢了自己落库的消息也会缺内容。客户端断开由外层「泵」负责丢弃。
+      const emit = (part: unknown) => {
+        try {
+          writer.write(part as never);
+        } catch (err) {
+          // 之前这里是静默 catch：一旦真失败，整条流会无声截断、线上完全查不出来。
+          if (!writeFailed) {
+            writeFailed = true;
+            logErr('[chat] 下发失败（消息可能不完整）:', err);
+          }
+        }
+      };
+      // SSE 心跳：工具执行（装依赖、构建）期间可能几分钟没有任何下行数据，
+      // 运营商 NAT / 代理 / 移动端 WebView 会把「空闲」连接掐掉 —— 之后收尾那段总结
+      // 就再也吐不到界面（线上实测 183s / 356s 处被断）。每 15s 发一条 transient
+      // 心跳保住连接；transient 不会进入消息 parts，前端无感。
+      const pingTimer = setInterval(
+        () => emit({ type: 'data-ping', data: { t: Date.now() }, transient: true }),
+        5_000,
+      );
+      pingTimer.unref?.();
+      // 增量缓冲的定时冲刷：上游只吐小块时也能按时下发（约 100ms 一批，观感仍是逐字）
+      const flushTimer = setInterval(() => flushDelta(), 100);
+      flushTimer.unref?.();
+      const tools = createTools(getRuntime(), ws, (part) => emit(part), {
         userId: user.id,
         projectId,
       });
@@ -295,7 +341,7 @@ chatRoutes.post('/:id/chat', async (c) => {
         softLimit: config.contextSoftLimit,
       });
       if (compressed.compressed) {
-        writer.write({
+        emit({
           type: 'data-context',
           id: 'context-compressed',
           data: {
@@ -353,13 +399,10 @@ chatRoutes.post('/:id/chat', async (c) => {
       const result = streamText({
         model,
         system,
-        // 客户端断开（点「停止」/关页面）→ 立刻停止生成与工具执行，
-        // 否则服务端会继续烧 token、继续占用沙箱（曾导致并发池被占满、后续消息全部失败）；
-        // 同时叠加单轮最长时长，避免上游卡死时前端无限等待。
-        abortSignal: AbortSignal.any([
-          c.req.raw.signal, // 用户点「停止」/ 关页面
-          roundAbort.signal, // 单轮超时 + 推理空转保护
-        ]),
+        // 注意：**不接** c.req.raw.signal。客户端断开（微信切后台/刷新/弱网）不该打断
+        // 这一轮 —— 否则用户回来只看得到半句话。断开只停止「下发」，本轮继续跑完并落库
+        // （见文件末尾自己泵响应的那段）。真正需要中止只有：单轮超时 / 推理空转保护。
+        abortSignal: roundAbort.signal,
         // 历史里可能有被中断的悬空工具调用：不修就会一直报 Tool result is missing
         messages: await convertToModelMessages(repairHistory(pruned)),
         tools,
@@ -414,8 +457,18 @@ chatRoutes.post('/:id/chat', async (c) => {
       // 前端 useChat 每条都要 setState + 重渲染，会被淹死（表现为「模型服务暂时不可用」）。
       // 这里把同类增量攒到 ~4KB 再发一块，内容一字不改，事件数降两个数量级。
       const DELTA_FIELDS: Record<string, string> = {
+        // 正文也合并：模型按 1~3 个字一个 delta，一篇 2000 字作文就是上千个事件，
+        // 前端每个事件都要整树重渲染 → 撞 React 嵌套更新上限（React #185）→
+        // 组件树被卸载 → 在途 /chat 被浏览器取消（线上真实事故）。
+        'text-delta': 'delta',
         'reasoning-delta': 'delta',
         'tool-input-delta': 'inputTextDelta',
+      };
+      // 正文字符少、冲刷更勤（保持逐字观感）；推理/工具参数块可以攒更大
+      const DELTA_LIMITS: Record<string, number> = {
+        'text-delta': 400,
+        'reasoning-delta': 4000,
+        'tool-input-delta': 4000,
       };
       const MAX_DELTA_CHARS = 4000;
       let deltaBuf: {
@@ -428,7 +481,7 @@ chatRoutes.post('/:id/chat', async (c) => {
         if (!deltaBuf) return;
         const { part, field, text } = deltaBuf;
         deltaBuf = null;
-        writer.write({ ...part, [field]: text } as never);
+        emit({ ...part, [field]: text } as never);
       };
       const reader = result.toUIMessageStream().getReader();
       try {
@@ -446,7 +499,7 @@ chatRoutes.post('/:id/chat', async (c) => {
             reasoningChars += (part.delta ?? '').length;
             if (reasoningChars > REASONING_GUARD_CHARS && !sawProgress) {
               reasoningGuardTripped = true;
-              roundAbort.abort();
+              roundAbort.abort(new Error('reasoning-guard'));
             }
           } else if (part?.type === 'text-delta' || part?.type === 'tool-input-start') {
             sawProgress = true;
@@ -455,23 +508,28 @@ chatRoutes.post('/:id/chat', async (c) => {
           const deltaField = DELTA_FIELDS[part?.type ?? ''];
           if (deltaField) {
             const raw = part as unknown as Record<string, unknown>;
-            const idField = part?.type === 'reasoning-delta' ? 'id' : 'toolCallId';
+            const idField = part?.type === 'tool-input-delta' ? 'toolCallId' : 'id';
             const key = `${part?.type}:${String(raw[idField] ?? '')}`;
             const text = String(raw[deltaField] ?? '');
+            const limit = DELTA_LIMITS[part?.type ?? ''] ?? MAX_DELTA_CHARS;
             if (deltaBuf && deltaBuf.key === key) {
               deltaBuf.text += text;
-              if (deltaBuf.text.length >= MAX_DELTA_CHARS) flushDelta();
+              if (deltaBuf.text.length >= limit) flushDelta();
             } else {
               flushDelta(); // 换目标前先冲刷，保证顺序
               deltaBuf = { part: raw, field: deltaField, text, key };
             }
           } else {
             flushDelta(); // 任何其他事件前先冲刷，保证顺序
-            writer.write(value as never);
+            emit(value);
           }
         }
       } finally {
         clearTimeout(roundTimer);
+        clearInterval(pingTimer);
+        clearInterval(flushTimer);
+        unregisterRound(projectId);
+        resolveRoundDone();
         flushDelta();
         // abortSignal 触发时 SDK 既不报错也不调用 onError —— 必须自己补一条明确提示，
         // 否则用户只看到「它自己就停了」（真实投诉：达到限制后静默结束）。
@@ -483,7 +541,7 @@ chatRoutes.post('/:id/chat', async (c) => {
             `[chat] ${roundTimedOut ? '单轮超时' : '推理空转'}停止 ${projectId}（${Math.round((Date.now() - roundStart) / 1000)}s、${steps.count} 步）`,
           );
           try {
-            writer.write({ type: 'error', errorText: notice } as never);
+            emit({ type: 'error', errorText: notice } as never);
           } catch {
             // 客户端已断开：忽略
           }
@@ -493,7 +551,7 @@ chatRoutes.post('/:id/chat', async (c) => {
         if (settledCredits > 0) {
           // 回读失败时省略 balance（前端保留上次值），不要伪造 0 误导用户
           const remaining = await ensureGrant(user.id).catch(() => null);
-          const write = writer.write.bind(writer);
+          const write = emit;
           try {
             write({
               type: 'data-credits',
@@ -535,9 +593,7 @@ chatRoutes.post('/:id/chat', async (c) => {
     onError: (err) => {
       clearTimeout(roundTimer);
       const elapsed = Math.round((Date.now() - roundStart) / 1000);
-      // 三种「主动中止」要分清：用户点停止 / 单轮超时 / 推理空转保护。
-      // 之前混作一谈，超时被记成「客户端中止」，用户只看到笼统的「模型服务不可用」。
-      const clientGone = c.req.raw.signal.aborted;
+      // 中止来源要分清：客户端断开 / 单轮超时 / 推理空转 / 上游报错。
       const isAbortish =
         err instanceof Error && (err.name === 'AbortError' || /abort/i.test(err.message));
       if (roundTimedOut) {
@@ -546,9 +602,9 @@ chatRoutes.post('/:id/chat', async (c) => {
         );
       } else if (reasoningGuardTripped) {
         console.log(`[chat] 推理空转停止 ${projectId}（${elapsed}s、${steps.count} 步）`);
-      } else if (clientGone || isAbortish) {
+      } else if (clientGone && isAbortish) {
         console.log(
-          `[chat] 客户端中止生成 ${projectId}（已运行 ${elapsed}s、${steps.count} 步）`,
+          `[chat] 客户端连接已断开，本轮中止（${elapsed}s、${steps.count} 步）`,
         );
       } else {
         // errLine 已展开 name/status/body/cause 链 —— 上游真实原因都在这里
@@ -604,5 +660,49 @@ chatRoutes.post('/:id/chat', async (c) => {
     },
   });
 
-  return createUIMessageStreamResponse({ stream });
+  /**
+   * 自己把 UI part 流泵到 HTTP 响应里，而不是用 createUIMessageStreamResponse。
+   *
+   * 原因：`@hono/node-server` 在响应被提前关闭时会 abort `req.signal`，而
+   * createUIMessageStreamResponse 把响应流和 execute 绑定 —— 客户端一断（微信切后台 /
+   * 刷新 / 弱网 / 代理掐长连接），整轮就被 cancel，回复断在半句（线上真实事故）。
+   * 这里客户端走了只停止 enqueue（继续排空上游并丢弃），本轮照常跑完并落库，
+   * 用户刷新（或前端自动续写）就能拿到完整内容。
+   */
+  let clientGone = false;
+  const responseBody = new ReadableStream<UIMessageChunk>({
+    async start(controller) {
+      const reader = stream.getReader();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (clientGone) continue; // 继续排空，丢弃即可
+          try {
+            controller.enqueue(value);
+          } catch {
+            clientGone = true;
+          }
+        }
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          /* 已关闭 */
+        }
+      }
+    },
+    cancel() {
+      if (!clientGone) {
+        clientGone = true;
+        console.log(
+          `[chat] 客户端连接断开，本轮继续跑完并落库 ${projectId}（用户刷新可见）`,
+        );
+      }
+    },
+  });
+  const sse = responseBody.pipeThrough(new JsonToSseTransformStream());
+  return new Response(sse.pipeThrough(new TextEncoderStream()), {
+    headers: UI_MESSAGE_STREAM_HEADERS,
+  });
 });

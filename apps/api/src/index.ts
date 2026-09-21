@@ -9,6 +9,7 @@ import { authRoutes } from './routes/auth';
 import { chatRoutes } from './routes/chat';
 import { creditRoutes } from './routes/credits';
 import { dbRoutes } from './routes/db';
+import { diagRoutes } from './routes/diag';
 import { projectRoutes } from './routes/projects';
 import { skillRoutes } from './routes/skills';
 
@@ -34,6 +35,7 @@ app.get('/api/health', (c) => c.json({ ok: true }));
 app.use('/api/*', originGuard);
 app.route('/api/auth', authRoutes);
 app.route('/api/credits', creditRoutes);
+app.route('/api/diag', diagRoutes);
 app.route('/api/projects', projectRoutes);
 app.route('/api/projects', chatRoutes);
 app.route('/api/projects', dbRoutes);
