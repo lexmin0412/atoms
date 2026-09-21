@@ -5,6 +5,8 @@ import { useParams } from 'react-router-dom';
 
 import CreditsBadge from '../components/CreditsBadge';
 import DatabaseView from '../components/DatabaseView';
+// 懒加载：Streamdown + Shiki 体积较大，推迟到首条消息渲染时再加载
+import Markdown from '../components/Markdown';
 import Reasoning from '../components/Reasoning';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -14,9 +16,6 @@ import { AtomsMark } from '../components/ui/Logo';
 import { Segmented, type SegmentedItem } from '../components/ui/Segmented';
 import { api, type SkillDto } from '../lib/api';
 import Skills from './Skills';
-
-// 懒加载：Streamdown + Shiki 体积较大，推迟到首条消息渲染时再加载
-const Markdown = lazy(() => import('../components/Markdown'));
 
 /** 移动端返回聊天用 */
 function IconBack() {
@@ -191,6 +190,7 @@ function toolLabel(name: string): string {
 }
 
 function ToolCard({ name, part }: { name: string; part: Part }) {
+  bumpRender('TerminalBlock');
   const [open, setOpen] = useState(false);
   const state = part.state ?? '';
   const running = state === 'input-streaming' || state === 'input-available';
@@ -234,8 +234,31 @@ function ToolCard({ name, part }: { name: string; part: Part }) {
   );
 }
 
+/**
+ * [诊断] 渲染风暴看守。
+ * React #185（Maximum update depth exceeded）只在生产包抛错、看不到组件栈，
+ * 这里用模块级计数统计「每个组件渲染了多少次」，页面每 2 秒汇总一次，
+ * 超过阈值就上报服务端 —— 哪个组件计数暴涨，就是它在循环。
+ */
+export const renderStats: Record<string, number> = {
+  Chat: 0,
+  Markdown: 0,
+  Reasoning: 0,
+  ToolCard: 0,
+  TerminalBlock: 0,
+  MessageFooter: 0,
+};
+export function bumpRender(name: keyof typeof renderStats) {
+  renderStats[name] = (renderStats[name] ?? 0) + 1;
+}
+
 function renderPart(part: Part, i: number, animating: boolean) {
+  bumpRender('Markdown');
   if (part.type === 'text' && part.text) {
+    // 流式期间也渲染 Markdown（isAnimating 让 Streamdown 按「未闭合 Markdown」处理）。
+    // 前提是服务端已把正文增量合并到 ~400 字/100ms：早前不合并时一篇作文上千个事件，
+    // 每个事件重渲染整棵树 → React #185（Maximum update depth exceeded）→ 组件树卸载 →
+    // 在途 /chat 被浏览器取消（线上真实事故）。若将来又出现渲染风暴，看 render-watch 上报。
     return (
       <Suspense key={i} fallback={<div className="whitespace-pre-wrap">{part.text}</div>}>
         <Markdown text={part.text} animating={animating} />
@@ -243,6 +266,7 @@ function renderPart(part: Part, i: number, animating: boolean) {
     );
   }
   if (part.type === 'reasoning' && part.text) {
+    bumpRender('Reasoning');
     return <Reasoning key={i} text={part.text} streaming={animating} />;
   }
   if (part.type === 'data-context' && part.data) {
@@ -261,6 +285,7 @@ function renderPart(part: Part, i: number, animating: boolean) {
   if (isTool) {
     const name =
       part.type === 'dynamic-tool' ? (part.toolName ?? 'tool') : part.type.slice(5);
+    bumpRender('ToolCard');
     return <ToolCard key={i} name={name} part={part} />;
   }
   return null;
@@ -297,6 +322,7 @@ function MessageFooter({
   canRegenerate: boolean;
   onRegenerate: () => void;
 }) {
+  bumpRender('MessageFooter');
   const [copied, setCopied] = useState(false);
   const c = creditsOf(parts);
   const text = parts
@@ -477,6 +503,100 @@ export default function Chat() {
   );
 
   const busy = status === 'submitted' || status === 'streaming';
+  // [诊断] 渲染风暴上报：2 秒内页面渲染超过 60 次（或任一子组件超过 200 次）就上报
+  bumpRender('Chat');
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const total = renderStats.Chat;
+      const hot = Object.entries(renderStats).filter(([, v]) => v > 400);
+      if (total > 120 || hot.length) {
+        void api.diag({
+          from: 'render-watch',
+          renders: { ...renderStats },
+          visibility: document.visibilityState,
+          online: navigator.onLine,
+          ua: navigator.userAgent,
+          url: location.href,
+        });
+      }
+      for (const k of Object.keys(renderStats)) renderStats[k] = 0;
+    }, 2000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /**
+   * 连接中断后的自愈。
+   * 服务端**不会**因为连接断开而中断本轮（会继续跑完并落库，见 chat.ts 的「自己泵响应」），
+   * 所以这里先轮询消息列表：等这轮完整落库（带 data-credits）后把完整内容替换上来。
+   * 只有在轮询超时（例如上游卡住）时才兜底补发一句「继续」，最多两次。
+   */
+  const [autoResume, setAutoResume] = useState(0);
+  const autoResumeRef = useRef(0);
+  const handledErrorRef = useRef<unknown>(null);
+  useEffect(() => {
+    autoResumeRef.current = 0;
+    handledErrorRef.current = null;
+    setAutoResume(0);
+  }, [id]);
+  useEffect(() => {
+    if (!id || !error) return;
+    // 同一个错误对象只处理一次：error 引用若每次渲染都变，这里会反复打接口
+    if (handledErrorRef.current === error) return;
+    handledErrorRef.current = error;
+    // 用户主动「停止」不算中断，不自动处理
+    if (friendlyError(error.message) === '已停止生成。') return;
+    // 把客户端视角报给服务端：服务端只能看到「连接被提前关闭」，看不到是谁关的
+    void api.diag({
+      projectId: id,
+      errorName: (error as Error).name,
+      errorMessage: error.message,
+      stack: ((error as Error).stack ?? '').slice(0, 1200),
+      rendered: { ...renderStats },
+      text: friendlyError(error.message),
+      visibility: document.visibilityState,
+      online: navigator.onLine,
+      ua: navigator.userAgent,
+      url: location.href,
+      at: new Date().toISOString(),
+    });
+    let cancelled = false;
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      if (cancelled) return;
+      void api
+        .messages(id)
+        .then((r) => {
+          if (cancelled) return;
+          const list = r.messages.map((m) => ({
+            id: m.id,
+            role: m.role as 'user' | 'assistant',
+            parts: m.parts,
+          }));
+          const last = [...list].reverse().find((m) => m.role === 'assistant');
+          const finished = (last?.parts ?? []).some(
+            (p) => (p as { type?: string }).type === 'data-credits',
+          );
+          if (finished) {
+            clearInterval(timer);
+            setMessages(list as never);
+            return;
+          }
+          // 兜底：3 分钟仍未落库，补一句「继续」（最多两次）
+          if (Date.now() - startedAt > 3 * 60 * 1000 && autoResumeRef.current < 2) {
+            clearInterval(timer);
+            autoResumeRef.current += 1;
+            setAutoResume(autoResumeRef.current);
+            sendMessage({ text: '继续' }, { body: { skills: pickedSkills } });
+          }
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, error]);
 
   // 容器宽度（拖拽与 clamp 的基准）
   useEffect(() => {
@@ -752,16 +872,29 @@ export default function Chat() {
 
   // 从最后一条 assistant 消息里取「是否撞到步数上限」：与消息一起持久化，刷新后仍在
   useEffect(() => {
+    let next: { maxSteps?: number; stepsUsed?: number } | null = null;
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const m = messages[i];
       if (m.role !== 'assistant') continue;
       const c = creditsOf((m.parts ?? []) as Part[]);
-      setStepsLimitNotice(
-        c?.stepsExceeded ? { maxSteps: c.maxSteps, stepsUsed: c.stepsUsed } : null,
-      );
-      return;
+      next = c?.stepsExceeded ? { maxSteps: c.maxSteps, stepsUsed: c.stepsUsed } : null;
+      break;
     }
-    setStepsLimitNotice(null);
+    // 值没变必须返回**同一个引用**：否则 React 会额外渲染一轮，配合每次渲染都变的
+    // messages 引用会滚成无限更新（React #185「Maximum update depth exceeded」），
+    // 组件树被卸载 → 在途的 /chat 请求被取消 → 回复断在半句（线上真实事故）。
+    setStepsLimitNotice((prev) => {
+      if (!prev && !next) return prev;
+      if (
+        prev &&
+        next &&
+        prev.maxSteps === next.maxSteps &&
+        prev.stepsUsed === next.stepsUsed
+      ) {
+        return prev;
+      }
+      return next;
+    });
   }, [messages]);
 
   useEffect(() => {
@@ -1423,7 +1556,9 @@ export default function Chat() {
           {error && friendlyError(error.message) !== '已停止生成。' && (
             <div className="panel border-danger/35 bg-danger/6 px-3 py-2">
               <span className="text-danger text-[12.5px] leading-relaxed">
-                {friendlyError(error.message)}
+                {autoResume > 0
+                  ? '连接中断，已自动接着写（也可以直接说「继续」）。'
+                  : '连接中断了，但本轮仍在后台继续完成；完成后会自动补全上面的内容，不需要重新发送。'}
               </span>
             </div>
           )}

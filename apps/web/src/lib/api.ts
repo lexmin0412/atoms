@@ -125,6 +125,13 @@ function normalizeProject(p: RawProject): ProjectDto {
 }
 
 export const api = {
+  /** 客户端诊断上报（断线时把本地视角报给服务端，便于和服务端日志对齐） */
+  diag: (d: Record<string, unknown>) =>
+    req<{ ok: boolean }>('/api/diag/client', {
+      method: 'POST',
+      body: JSON.stringify(d),
+    }).catch(() => ({ ok: false })),
+
   me: () => req<{ user: UserDto }>('/api/auth/me'),
   register: (d: { email: string; username: string; password: string }) =>
     req<{ user: UserDto }>('/api/auth/register', {

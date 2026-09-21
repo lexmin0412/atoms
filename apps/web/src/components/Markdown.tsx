@@ -20,7 +20,6 @@ export default function Markdown({
       className="text-sm leading-relaxed"
       plugins={{ code, cjk }}
       isAnimating={animating}
-      animated
     >
       {text}
     </Streamdown>

@@ -21,8 +21,24 @@ export class ErrorBoundary extends Component<Props, State> {
     return { error };
   }
 
-  componentDidCatch(error: Error) {
-    console.error('[ui] crashed:', error.message);
+  componentDidCatch(error: Error, info: { componentStack?: string | null }) {
+    console.error('[ui] crashed:', error.message, info?.componentStack);
+    // 上报给服务端：生产包是压缩过的，光看 message 定位不到是哪个组件
+    void fetch('/api/diag/client', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        from: 'error-boundary',
+        errorName: error.name,
+        errorMessage: error.message,
+        stack: (error.stack ?? '').slice(0, 1500),
+        componentStack: (info?.componentStack ?? '').slice(0, 1500),
+        visibility: document.visibilityState,
+        online: navigator.onLine,
+        ua: navigator.userAgent,
+        url: location.href,
+      }),
+    }).catch(() => {});
   }
 
   render() {
